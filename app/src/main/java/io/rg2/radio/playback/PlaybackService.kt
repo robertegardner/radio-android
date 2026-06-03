@@ -83,7 +83,12 @@ class PlaybackService : MediaLibraryService() {
         player.addListener(ReconnectListener())
         player.addListener(MetadataUpdater())
 
-        session = MediaLibrarySession.Builder(this, player, LibraryCallback()).build()
+        // Session drives the live-stream wrapper so pause/resume (from the UI,
+        // lock-screen, or notification) rejoin the live edge instead of
+        // replaying buffered audio. Internal control (reconnect, metadata pump)
+        // still operates on the underlying ExoPlayer; ForwardingPlayer relays
+        // its events to the session.
+        session = MediaLibrarySession.Builder(this, LiveStreamPlayer(player), LibraryCallback()).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
