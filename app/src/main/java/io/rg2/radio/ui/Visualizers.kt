@@ -16,12 +16,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,18 +54,29 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val BAR_COUNT = 32
-private val VISUALIZER_HEIGHT = 120.dp
+private val VISUALIZER_HEIGHT = 130.dp
+
+/**
+ * Visualizer styles, Winamp-flavored. All but [SYNTHETIC] are driven by the
+ * real audio (FFT or waveform) and need RECORD_AUDIO.
+ */
+enum class VizStyle(val label: String, val reactive: Boolean) {
+    BARS("BARS", true),
+    PEAKS("PEAKS", true),
+    MIRROR("MIRROR", true),
+    SCOPE("SCOPE", true),
+    SYNTHETIC("SYNTH", false),
+}
 
 /**
  * The visualizer pane shown in the program area when captions are off (or
- * unavailable). Offers both implementations behind a live selector so they can
- * be compared on-device; the reactive one requests RECORD_AUDIO on demand and
- * falls back to synthetic until granted.
+ * unavailable). A reactive style requests RECORD_AUDIO on demand and falls back
+ * to SYNTHETIC until granted.
  */
 @Composable
 fun VisualizerPane(
-    reactive: Boolean,
-    onReactiveChange: (Boolean) -> Unit,
+    style: VizStyle,
+    onStyleChange: (VizStyle) -> Unit,
     isPlaying: Boolean,
     audioSessionId: Int,
     modifier: Modifier = Modifier,
@@ -74,11 +87,11 @@ fun VisualizerPane(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         hasMic = granted
-        if (!granted) onReactiveChange(false) // denied → snap back to synthetic
+        if (!granted) onStyleChange(VizStyle.SYNTHETIC) // denied → safe fallback
     }
 
-    LaunchedEffect(reactive) {
-        if (reactive && !hasMic) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    LaunchedEffect(style) {
+        if (style.reactive && !hasMic) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     Box(
@@ -87,19 +100,24 @@ fun VisualizerPane(
             .height(VISUALIZER_HEIGHT),
         contentAlignment = Alignment.Center,
     ) {
-        if (reactive && hasMic) {
-            ReactiveVisualizer(audioSessionId, Amber, Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT))
+        val canvasMod = Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT)
+        if (style.reactive && hasMic) {
+            ReactiveVisualizer(style, audioSessionId, Amber, canvasMod)
         } else {
-            SyntheticVisualizer(isPlaying, Amber, Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT))
+            SyntheticVisualizer(isPlaying, Amber, canvasMod)
         }
     }
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(top = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        VizModeChip("SYNTHETIC", active = !reactive) { onReactiveChange(false) }
-        VizModeChip("REACTIVE", active = reactive) { onReactiveChange(true) }
+        VizStyle.entries.forEach { s ->
+            VizModeChip(s.label, active = s == style) { onStyleChange(s) }
+        }
     }
 }
 
@@ -131,48 +149,58 @@ fun SyntheticVisualizer(isPlaying: Boolean, color: Color, modifier: Modifier = M
         animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart),
         label = "phase",
     )
-    // Amplitude eases to near-zero when paused so the bars "settle".
     val amp by animateFloatAsState(if (isPlaying) 1f else 0.04f, tween(500), label = "amp")
 
     Canvas(modifier) {
         val values = FloatArray(BAR_COUNT) { i ->
             val f = i.toFloat() / BAR_COUNT
-            val arch = sin(PI * f)                                   // 0 at edges, 1 in the middle
+            val arch = sin(PI * f)
             val a = (sin((phase + f * 6f).toDouble()) + 1.0) / 2.0
             val b = (sin((phase * 1.7f + f * 11f).toDouble()) + 1.0) / 2.0
             (arch * (0.6 * a + 0.4 * b) * amp).toFloat()
         }
-        drawSpectrum(values, color)
+        drawBars(values, color)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Reactive: real FFT from the audio output via the Visualizer effect.
+// Reactive: real FFT + waveform from the Visualizer effect.
 // ---------------------------------------------------------------------------
 
 @Composable
-fun ReactiveVisualizer(sessionId: Int, color: Color, modifier: Modifier = Modifier) {
-    var values by remember { mutableStateOf(FloatArray(BAR_COUNT)) }
+fun ReactiveVisualizer(style: VizStyle, sessionId: Int, color: Color, modifier: Modifier = Modifier) {
+    var bars by remember { mutableStateOf(FloatArray(BAR_COUNT)) }
+    var peaks by remember { mutableStateOf(FloatArray(BAR_COUNT)) }
+    var waveform by remember { mutableStateOf(FloatArray(0)) }
     var failed by remember { mutableStateOf(false) }
 
     DisposableEffect(sessionId) {
         if (sessionId <= 0) return@DisposableEffect onDispose {}
         val smoothed = FloatArray(BAR_COUNT)
+        val peakHold = FloatArray(BAR_COUNT)
         val visualizer = runCatching {
             Visualizer(sessionId).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(1024)
                 setDataCaptureListener(
                     object : Visualizer.OnDataCaptureListener {
-                        override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, rate: Int) {}
+                        override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, rate: Int) {
+                            w ?: return
+                            waveform = FloatArray(w.size) { ((w[it].toInt() and 0xFF) - 128) / 128f }
+                        }
+
                         override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
                             fft ?: return
-                            val bars = fftToBars(fft)
-                            for (i in bars.indices) smoothed[i] = smoothed[i] * 0.55f + bars[i] * 0.45f
-                            values = smoothed.copyOf()
+                            val next = fftToBars(fft)
+                            for (i in next.indices) {
+                                smoothed[i] = smoothed[i] * 0.55f + next[i] * 0.45f
+                                peakHold[i] = maxOf(peakHold[i] - 0.025f, smoothed[i]) // gravity
+                            }
+                            bars = smoothed.copyOf()
+                            peaks = peakHold.copyOf()
                         }
                     },
                     Visualizer.getMaxCaptureRate(),
-                    /* waveform = */ false,
+                    /* waveform = */ true,
                     /* fft = */ true,
                 )
                 enabled = true
@@ -191,7 +219,14 @@ fun ReactiveVisualizer(sessionId: Int, color: Color, modifier: Modifier = Modifi
     }
 
     Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT)) { drawSpectrum(values, color) }
+        Canvas(Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT)) {
+            when (style) {
+                VizStyle.PEAKS -> { drawBars(bars, color); drawPeakCaps(peaks, color) }
+                VizStyle.MIRROR -> drawMirror(bars, color)
+                VizStyle.SCOPE -> drawScope(waveform, color)
+                else -> drawBars(bars, color)
+            }
+        }
         when {
             sessionId <= 0 -> HintText("waiting for audio…")
             failed -> HintText("reactive visualizer unavailable on this device")
@@ -205,17 +240,16 @@ private fun HintText(text: String) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared bar rendering + FFT math.
+// Drawing styles.
 // ---------------------------------------------------------------------------
 
-private fun DrawScope.drawSpectrum(values: FloatArray, color: Color) {
+private fun DrawScope.drawBars(values: FloatArray, color: Color) {
     if (values.isEmpty()) return
     val n = values.size
     val gap = size.width * 0.010f
     val barW = (size.width - gap * (n - 1)) / n
     for (i in 0 until n) {
-        val v = values[i].coerceIn(0f, 1f)
-        val h = (0.04f + 0.96f * v) * size.height
+        val h = (0.04f + 0.96f * values[i].coerceIn(0f, 1f)) * size.height
         val x = i * (barW + gap)
         drawRoundRect(
             color = color,
@@ -223,6 +257,51 @@ private fun DrawScope.drawSpectrum(values: FloatArray, color: Color) {
             size = Size(barW, h),
             cornerRadius = CornerRadius(barW * 0.5f, barW * 0.5f),
         )
+    }
+}
+
+private fun DrawScope.drawPeakCaps(peaks: FloatArray, color: Color) {
+    if (peaks.isEmpty()) return
+    val n = peaks.size
+    val gap = size.width * 0.010f
+    val barW = (size.width - gap * (n - 1)) / n
+    val capH = size.height * 0.02f
+    for (i in 0 until n) {
+        val y = size.height - peaks[i].coerceIn(0f, 1f) * size.height
+        drawRect(color, Offset(i * (barW + gap), y), Size(barW, capH))
+    }
+}
+
+private fun DrawScope.drawMirror(values: FloatArray, color: Color) {
+    if (values.isEmpty()) return
+    val n = values.size
+    val gap = size.width * 0.010f
+    val barW = (size.width - gap * (n - 1)) / n
+    val mid = size.height / 2f
+    for (i in 0 until n) {
+        val half = (0.02f + 0.48f * values[i].coerceIn(0f, 1f)) * size.height
+        val x = i * (barW + gap)
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(x, mid - half),
+            size = Size(barW, half * 2),
+            cornerRadius = CornerRadius(barW * 0.5f, barW * 0.5f),
+        )
+    }
+}
+
+private fun DrawScope.drawScope(samples: FloatArray, color: Color) {
+    if (samples.size < 2) return
+    val mid = size.height / 2f
+    val step = size.width / (samples.size - 1)
+    var prevX = 0f
+    var prevY = mid - samples[0] * mid * 0.9f
+    for (i in 1 until samples.size) {
+        val x = i * step
+        val y = mid - samples[i] * mid * 0.9f
+        drawLine(color, Offset(prevX, prevY), Offset(x, y), strokeWidth = 2.5f)
+        prevX = x
+        prevY = y
     }
 }
 

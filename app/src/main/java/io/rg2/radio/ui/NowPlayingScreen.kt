@@ -36,8 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -58,6 +61,7 @@ import io.rg2.radio.data.Favorites
 import io.rg2.radio.data.NowPlaying
 import io.rg2.radio.playback.PlaybackService
 import io.rg2.radio.ui.theme.Amber
+import io.rg2.radio.ui.theme.RadioSurface
 import io.rg2.radio.ui.theme.SignalBad
 import io.rg2.radio.ui.theme.SignalGood
 import io.rg2.radio.ui.theme.SignalWarn
@@ -74,6 +78,7 @@ fun NowPlayingRoute(
 ) {
     val controller = rememberMediaController()
     val nowPlaying by viewModel.nowPlaying.collectAsStateWithLifecycle()
+    val artworkUrl by viewModel.artworkUrl.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val audioSessionId by (context.applicationContext as RadioApp)
@@ -82,7 +87,8 @@ fun NowPlayingRoute(
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
     var captionsOn by rememberSaveable { mutableStateOf(true) }
-    var reactiveViz by rememberSaveable { mutableStateOf(false) }
+    var vizStyleName by rememberSaveable { mutableStateOf(VizStyle.BARS.name) }
+    val vizStyle = VizStyle.valueOf(vizStyleName)
 
     DisposableEffect(controller) {
         val c = controller ?: return@DisposableEffect onDispose {}
@@ -105,10 +111,11 @@ fun NowPlayingRoute(
         isPlaying = isPlaying,
         isBuffering = isBuffering,
         enabled = controller != null,
+        artworkUrl = artworkUrl,
         captionsOn = captionsOn,
         onToggleCaptions = { captionsOn = it },
-        reactiveViz = reactiveViz,
-        onReactiveChange = { reactiveViz = it },
+        vizStyle = vizStyle,
+        onVizStyleChange = { vizStyleName = it.name },
         audioSessionId = audioSessionId,
         onPlayPause = {
             val c = controller ?: return@NowPlayingScreen
@@ -142,10 +149,11 @@ private fun NowPlayingScreen(
     isPlaying: Boolean,
     isBuffering: Boolean,
     enabled: Boolean,
+    artworkUrl: String?,
     captionsOn: Boolean,
     onToggleCaptions: (Boolean) -> Unit,
-    reactiveViz: Boolean,
-    onReactiveChange: (Boolean) -> Unit,
+    vizStyle: VizStyle,
+    onVizStyleChange: (VizStyle) -> Unit,
     audioSessionId: Int,
     onPlayPause: () -> Unit,
     onSelectFavorite: (Favorite) -> Unit,
@@ -161,13 +169,13 @@ private fun NowPlayingScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         StatusHeader(state)
-        TunerDisplay(np)
+        TunerDisplay(np, artworkUrl)
         ProgramPane(
             np = np,
             captionsOn = captionsOn,
             onToggleCaptions = onToggleCaptions,
-            reactiveViz = reactiveViz,
-            onReactiveChange = onReactiveChange,
+            vizStyle = vizStyle,
+            onVizStyleChange = onVizStyleChange,
             isPlaying = isPlaying,
             audioSessionId = audioSessionId,
         )
@@ -214,76 +222,120 @@ private fun StatusHeader(state: Polled<NowPlaying>) {
 }
 
 @Composable
-private fun TunerDisplay(np: NowPlaying?) {
+private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(24.dp),
     ) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            BandChip(np?.band)
-
-            val unit = when (np?.band) {
-                Band.AM -> "kHz"
-                Band.FM -> "MHz"
-                null -> ""
-            }
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = np?.freq ?: "—––.–",
-                    color = Amber,
-                    fontSize = 60.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
+        Box {
+            // Album art behind the panel (music only), under a scrim so the
+            // amber readout and text stay legible.
+            if (artworkUrl != null) {
+                AsyncImage(
+                    model = artworkUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
                 )
-                if (unit.isNotEmpty()) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = unit,
-                        color = Amber,
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-                }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    RadioSurface.copy(alpha = 0.62f),
+                                    RadioSurface.copy(alpha = 0.90f),
+                                ),
+                            ),
+                        ),
+                )
             }
 
-            Text(
-                text = np.stationName(),
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            np.fccLine()?.let {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                BandChip(np?.band)
+
+                val unit = when (np?.band) {
+                    Band.AM -> "kHz"
+                    Band.FM -> "MHz"
+                    null -> ""
+                }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = np?.freq ?: "—––.–",
+                        color = Amber,
+                        fontSize = 60.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (unit.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = unit,
+                            color = Amber,
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        )
+                    }
+                }
+
                 Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 14.sp,
+                    text = np.stationName(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-
-            // Song / lyric info lives here so the program pane is free for
-            // captions or the visualizer.
-            np?.let { n ->
-                n.songLine()?.let {
-                    Spacer(Modifier.height(2.dp))
+                np.fccLine()?.let {
                     Text(
                         text = it,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                n.currentLyric()?.let {
-                    Text(text = it, color = Amber, fontSize = 14.sp)
-                }
+
+                TrackPanel(np)
             }
         }
+    }
+}
+
+/**
+ * Static title/artist panel from the parsed song data (the RDS RadioText on
+ * the air scrolls; this stays put). Shown only when song info is available.
+ */
+@Composable
+private fun TrackPanel(np: NowPlaying?) {
+    val song = np?.lyrics?.song ?: return
+    val title = song.title?.takeIf { it.isNotBlank() }
+    val artist = song.artist?.takeIf { it.isNotBlank() }
+    if (title == null && artist == null) return
+
+    Spacer(Modifier.height(6.dp))
+    title?.let {
+        Text(
+            text = it,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    artist?.let {
+        Text(
+            text = it,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 15.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    np.currentLyric()?.let {
+        Text(text = it, color = Amber, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -310,8 +362,8 @@ private fun ProgramPane(
     np: NowPlaying?,
     captionsOn: Boolean,
     onToggleCaptions: (Boolean) -> Unit,
-    reactiveViz: Boolean,
-    onReactiveChange: (Boolean) -> Unit,
+    vizStyle: VizStyle,
+    onVizStyleChange: (VizStyle) -> Unit,
     isPlaying: Boolean,
     audioSessionId: Int,
 ) {
@@ -333,8 +385,8 @@ private fun ProgramPane(
             )
         } else {
             VisualizerPane(
-                reactive = reactiveViz,
-                onReactiveChange = onReactiveChange,
+                style = vizStyle,
+                onStyleChange = onVizStyleChange,
                 isPlaying = isPlaying,
                 audioSessionId = audioSessionId,
             )
@@ -553,16 +605,6 @@ private fun NowPlaying?.fccLine(): String? {
     if (parts.isEmpty()) return np.rds?.rt?.takeIf { it.isNotBlank() }
     val place = listOfNotNull(np.fcc?.city, np.fcc?.state).joinToString(", ")
     return listOfNotNull(np.fcc?.call, place.takeIf { it.isNotBlank() }).joinToString(" · ")
-}
-
-private fun NowPlaying.songLine(): String? {
-    val song = lyrics?.song ?: return null
-    val artist = song.artist?.takeIf { it.isNotBlank() }
-    val title = song.title?.takeIf { it.isNotBlank() }
-    return when {
-        artist != null && title != null -> "$artist — $title"
-        else -> title ?: artist
-    }
 }
 
 private fun NowPlaying.currentLyric(): String? {

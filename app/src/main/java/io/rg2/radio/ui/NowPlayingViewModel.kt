@@ -6,8 +6,12 @@ import androidx.lifecycle.viewModelScope
 import io.rg2.radio.RadioApp
 import io.rg2.radio.data.NowPlaying
 import io.rg2.radio.data.Stations
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 
@@ -34,12 +38,30 @@ data class Polled<T>(
  */
 class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val repo = (app as RadioApp).container.nowPlayingRepository
+    private val container = (app as RadioApp).container
+    private val repo = container.nowPlayingRepository
+    private val artworkRepo = container.artworkRepository
 
     val nowPlaying: StateFlow<Polled<NowPlaying>> =
         repo.nowPlaying()
             .runningFold(Polled<NowPlaying>()) { prev, result -> prev.reduce(result) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), Polled())
+
+    /**
+     * Cover-art URL for the current track, or null when there's no song (talk
+     * content) or no art was found. Refetches only when the track changes.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val artworkUrl: StateFlow<String?> =
+        nowPlaying
+            .map { it.data?.lyrics?.song?.let { s -> SongKey(s.artist, s.title) } }
+            .distinctUntilChanged()
+            .mapLatest { key ->
+                val artist = key?.artist?.takeIf { it.isNotBlank() }
+                val title = key?.title?.takeIf { it.isNotBlank() }
+                if (artist != null && title != null) artworkRepo.artworkUrl(artist, title) else null
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
 
     val stations: StateFlow<Polled<Stations>> =
         repo.stations()
@@ -55,3 +77,6 @@ class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
         private const val STOP_TIMEOUT_MS = 5_000L
     }
 }
+
+/** Identifies a track for artwork lookup / change detection. */
+private data class SongKey(val artist: String?, val title: String?)

@@ -64,4 +64,7 @@ dependencies {
     // Auto browse tree.
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+
+    // Album-art image loading (remote cover art from the iTunes Search API).
+    implementation(libs.coil.compose)
 }
