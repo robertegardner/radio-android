@@ -173,6 +173,7 @@ private fun NowPlayingScreen(
     ) {
         StatusHeader(state)
         TunerDisplay(np, artworkUrl)
+        TrackIdTile(np)
         ProgramPane(
             np = np,
             captionsOn = captionsOn,
@@ -306,57 +307,136 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-
-                TrackPanel(np)
-
-                np.rdsLine()?.let {
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         }
     }
 }
 
 /**
- * Static title/artist panel from the parsed song data (the RDS RadioText on
- * the air scrolls; this stays put). Shown only when song info is available.
+ * Dedicated, static "what's playing and how we know" tile between the tuner and
+ * the captions/visualizer. Shows the derived artist/title, a badge declaring the
+ * identification source (RDS / Chromaprint / Lyric match), and the raw RDS feed
+ * so the live broadcast data is always visible.
  */
 @Composable
-private fun TrackPanel(np: NowPlaying?) {
-    np ?: return
-    val title = np.trackTitle()
-    val artist = np.trackArtist()
-    if (title == null && artist == null) return
+private fun TrackIdTile(np: NowPlaying?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val title = np?.trackTitle()
+            val artist = np?.trackArtist()
+            val source = np?.track?.source
 
-    Spacer(Modifier.height(6.dp))
-    title?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("TRACK ID")
+                Spacer(Modifier.weight(1f))
+                SourceBadge(source)
+            }
+
+            if (title != null || artist != null) {
+                title?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                artist?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                np?.track?.album?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
+                Text(
+                    text = "No song identified yet",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 15.sp,
+                )
+            }
+
+            RdsReadout(np)
+        }
+    }
+}
+
+/** Badge naming the identification source, or "—" when nothing is identified. */
+@Composable
+private fun SourceBadge(source: String?) {
+    val label = when (source) {
+        "rds" -> "RDS"
+        "acoustid" -> "CHROMAPRINT"
+        "lyrics" -> "LYRIC MATCH"
+        else -> "—"
+    }
+    val identified = source != null
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .then(
+                if (identified) Modifier.background(Amber)
+                else Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(6.dp)),
+            )
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
         Text(
-            text = it,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+            text = label,
+            color = if (identified) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 10.sp,
+            letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold,
         )
     }
-    artist?.let {
+}
+
+/** Raw RDS feed (PS / RadioText / program type) so live broadcast data is always visible. */
+@Composable
+private fun RdsReadout(np: NowPlaying?) {
+    val rds = np?.rds ?: return
+    val ps = rds.ps?.takeIf { it.isNotBlank() }
+    val rt = rds.rt?.takeIf { it.isNotBlank() }
+    val pty = rds.progType?.takeIf { it.isNotBlank() }
+    if (ps == null && rt == null && pty == null) return
+
+    Spacer(Modifier.height(4.dp))
+    val head = listOfNotNull(ps?.let { "PS $it" }, pty?.let { "· $it" }).joinToString(" ")
+    if (head.isNotBlank()) {
         Text(
-            text = it,
+            text = "RDS  $head",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 15.sp,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
-    np.currentLyric()?.let {
-        Text(text = it, color = Amber, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    rt?.let {
+        Text(
+            text = it,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -625,21 +705,6 @@ private fun NowPlaying?.stationName(): String {
 private fun NowPlaying?.placeLine(): String? {
     val np = this ?: return null
     return listOfNotNull(np.fcc?.city, np.fcc?.state).joinToString(", ").takeIf { it.isNotBlank() }
-}
-
-/** Raw RDS readout (PS / RadioText) so the live RDS feed is visible while debugging FM. */
-private fun NowPlaying?.rdsLine(): String? {
-    val rds = this?.rds ?: return null
-    val parts = listOfNotNull(
-        rds.ps?.takeIf { it.isNotBlank() },
-        rds.rt?.takeIf { it.isNotBlank() },
-    )
-    return if (parts.isEmpty()) null else "RDS · " + parts.joinToString(" · ")
-}
-
-private fun NowPlaying.currentLyric(): String? {
-    val l = lyrics ?: return null
-    return l.lines.getOrNull(l.index)?.text?.takeIf { it.isNotBlank() }
 }
 
 private fun NowPlaying?.activeFavorite(): Favorite? {
