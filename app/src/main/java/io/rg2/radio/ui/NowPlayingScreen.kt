@@ -54,6 +54,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import io.rg2.radio.BuildConfig
 import io.rg2.radio.RadioApp
 import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
@@ -204,13 +205,20 @@ private fun StatusHeader(state: Polled<NowPlaying>) {
         else -> SignalWarn to "CONNECTING"
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "RG2 RADIO",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 4.sp,
-        )
+        Column {
+            Text(
+                text = "RG2 RADIO",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 4.sp,
+            )
+            Text(
+                text = "v${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 10.sp,
+            )
+        }
         Spacer(Modifier.weight(1f))
         Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
         Spacer(Modifier.width(8.dp))

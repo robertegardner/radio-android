@@ -5,6 +5,22 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/** Short git SHA of the working tree at build time, with a -dirty suffix for
+ *  uncommitted changes — surfaced in the UI so test devices can be matched to a
+ *  build. Uses providers.exec so it stays configuration-cache compatible. */
+fun gitRevision(): String {
+    fun exec(vararg cmd: String): String =
+        providers.exec { commandLine(*cmd) }.standardOutput.asText.get().trim()
+    return try {
+        val sha = exec("git", "rev-parse", "--short", "HEAD")
+        if (sha.isEmpty()) return "nogit"
+        val dirty = if (exec("git", "status", "--porcelain").isNotEmpty()) "-dirty" else ""
+        "$sha$dirty"
+    } catch (_: Exception) {
+        "nogit"
+    }
+}
+
 android {
     namespace = "io.rg2.radio"
     compileSdk = 36
@@ -15,6 +31,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "GIT_SHA", "\"${gitRevision()}\"")
     }
 
     buildTypes {
@@ -36,6 +53,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
