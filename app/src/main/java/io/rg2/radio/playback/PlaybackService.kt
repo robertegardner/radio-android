@@ -16,15 +16,17 @@ import androidx.media3.session.MediaSession
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
-import io.rg2.radio.data.Band
+import io.rg2.radio.RadioApp
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
-import io.rg2.radio.data.InMemoryRadioSettings
+import io.rg2.radio.data.NowPlaying
+import io.rg2.radio.data.NowPlayingRepository
 import io.rg2.radio.data.RadioApi
 import io.rg2.radio.data.RadioSettings
 import io.rg2.radio.data.TuneRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -49,16 +51,19 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var player: ExoPlayer
     private lateinit var session: MediaLibrarySession
 
-    // TODO: swap InMemoryRadioSettings for the encrypted settings store once the
-    // settings screen lands. Base URL default + no auth works against the live
-    // backend today (tune auth isn't enforced yet).
-    private val settings: RadioSettings = InMemoryRadioSettings()
-    private val api = RadioApi({ settings })
+    // Shared with the rest of the app via the application container, so tuning
+    // here and polling in the UI use one RadioApi / settings / repository source.
+    private val container by lazy { (application as RadioApp).container }
+    private val api: RadioApi by lazy { container.api }
+    private val repo: NowPlayingRepository by lazy { container.nowPlayingRepository }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     /** Re-prepare backoff after the stream connection drops (e.g. backend restart on tune). */
     private var reconnectAttempts = 0
+
+    /** Live now-playing → session metadata pump; runs only while playing. */
+    private var metadataJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -76,6 +81,7 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
         player.addListener(ReconnectListener())
+        player.addListener(MetadataUpdater())
 
         session = MediaLibrarySession.Builder(this, player, LibraryCallback()).build()
     }
@@ -112,6 +118,68 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlaybackStateChanged(state: Int) {
             if (state == Player.STATE_READY) reconnectAttempts = 0
         }
+    }
+
+    /**
+     * The notification / lock-screen show the *player's* current MediaItem
+     * metadata, which starts as just the favorite's static label. This pumps the
+     * live `now_playing` feed (RDS station, song title/artist, RadioText) into
+     * that metadata while playing, so the lock-screen tracks what's actually on
+     * air. Only runs while playing — no point polling for a transport nobody can
+     * see.
+     */
+    private inner class MetadataUpdater : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying) startMetadataUpdates() else stopMetadataUpdates()
+        }
+    }
+
+    private fun startMetadataUpdates() {
+        if (metadataJob?.isActive == true) return
+        metadataJob = scope.launch {
+            repo.nowPlaying().collect { result ->
+                val np = result.getOrNull() ?: return@collect
+                val current = player.currentMediaItem ?: return@collect
+                val updated = liveMetadata(np, current.mediaMetadata)
+                if (updated != current.mediaMetadata) {
+                    // Same URI/mediaId, metadata-only change → seamless, no re-buffer.
+                    player.replaceMediaItem(
+                        player.currentMediaItemIndex,
+                        current.buildUpon().setMediaMetadata(updated).build(),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun stopMetadataUpdates() {
+        metadataJob?.cancel()
+        metadataJob = null
+    }
+
+    /**
+     * Merge live [np] over the current item's metadata (which carries the
+     * favorite label/sublabel as fallback). Notification line 1 = song title or
+     * station; line 2 = song artist, else RadioText, else the favorite sublabel.
+     */
+    private fun liveMetadata(np: NowPlaying, base: MediaMetadata): MediaMetadata {
+        val station = np.rds?.ps?.takeIf { it.isNotBlank() }
+            ?: np.fcc?.call?.takeIf { it.isNotBlank() }
+            ?: base.station?.toString()
+            ?: base.title?.toString()
+        val songTitle = np.lyrics?.song?.title?.takeIf { it.isNotBlank() }
+        val songArtist = np.lyrics?.song?.artist?.takeIf { it.isNotBlank() }
+
+        val line1 = songTitle ?: station
+        val line2 = songArtist
+            ?: np.rds?.rt?.takeIf { it.isNotBlank() }
+            ?: base.subtitle?.toString()
+
+        return base.buildUpon()
+            .setTitle(line1)
+            .setArtist(line2)
+            .setStation(station)
+            .build()
     }
 
     private inner class LibraryCallback : MediaLibrarySession.Callback {
