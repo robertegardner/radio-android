@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import io.rg2.radio.RadioApp
 import io.rg2.radio.data.NowPlaying
 import io.rg2.radio.data.Stations
+import io.rg2.radio.data.trackArtist
+import io.rg2.radio.data.trackTitle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -54,7 +56,7 @@ class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val artworkUrl: StateFlow<String?> =
         nowPlaying
-            .map { it.data?.lyrics?.song?.let { s -> SongKey(s.artist, s.title) } }
+            .map { it.data?.let { np -> SongKey(np.trackArtist(), np.trackTitle()) } }
             .distinctUntilChanged()
             .mapLatest { key ->
                 val artist = key?.artist?.takeIf { it.isNotBlank() }

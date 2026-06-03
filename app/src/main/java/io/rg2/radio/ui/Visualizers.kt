@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -49,12 +50,16 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import io.rg2.radio.ui.theme.Amber
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val BAR_COUNT = 32
 private val VISUALIZER_HEIGHT = 130.dp
+
+// Bright cap color so PEAKS reads clearly against the amber bars.
+private val PEAK_CAP_COLOR = Color(0xFFFFF3D6)
 
 /**
  * Visualizer styles, Winamp-flavored. All but [SYNTHETIC] are driven by the
@@ -65,6 +70,7 @@ enum class VizStyle(val label: String, val reactive: Boolean) {
     PEAKS("PEAKS", true),
     MIRROR("MIRROR", true),
     SCOPE("SCOPE", true),
+    FRACTAL("FRACTAL", true),
     SYNTHETIC("SYNTH", false),
 }
 
@@ -172,6 +178,7 @@ fun ReactiveVisualizer(style: VizStyle, sessionId: Int, color: Color, modifier: 
     var bars by remember { mutableStateOf(FloatArray(BAR_COUNT)) }
     var peaks by remember { mutableStateOf(FloatArray(BAR_COUNT)) }
     var waveform by remember { mutableStateOf(FloatArray(0)) }
+    var phase by remember { mutableStateOf(0f) }
     var failed by remember { mutableStateOf(false) }
 
     DisposableEffect(sessionId) {
@@ -192,11 +199,14 @@ fun ReactiveVisualizer(style: VizStyle, sessionId: Int, color: Color, modifier: 
                             fft ?: return
                             val next = fftToBars(fft)
                             for (i in next.indices) {
-                                smoothed[i] = smoothed[i] * 0.55f + next[i] * 0.45f
-                                peakHold[i] = maxOf(peakHold[i] - 0.025f, smoothed[i]) // gravity
+                                smoothed[i] = smoothed[i] * 0.5f + next[i] * 0.5f
+                                // Peak caps fall slowly under gravity so they
+                                // float visibly above the bars on every dip.
+                                peakHold[i] = maxOf(peakHold[i] - 0.010f, smoothed[i])
                             }
                             bars = smoothed.copyOf()
                             peaks = peakHold.copyOf()
+                            phase += 0.05f // drives FRACTAL rotation (~capture rate)
                         }
                     },
                     Visualizer.getMaxCaptureRate(),
@@ -221,9 +231,10 @@ fun ReactiveVisualizer(style: VizStyle, sessionId: Int, color: Color, modifier: 
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT)) {
             when (style) {
-                VizStyle.PEAKS -> { drawBars(bars, color); drawPeakCaps(peaks, color) }
+                VizStyle.PEAKS -> { drawBars(bars, color); drawPeakCaps(peaks, PEAK_CAP_COLOR) }
                 VizStyle.MIRROR -> drawMirror(bars, color)
                 VizStyle.SCOPE -> drawScope(waveform, color)
+                VizStyle.FRACTAL -> drawFractal(bars, phase)
                 else -> drawBars(bars, color)
             }
         }
@@ -265,9 +276,11 @@ private fun DrawScope.drawPeakCaps(peaks: FloatArray, color: Color) {
     val n = peaks.size
     val gap = size.width * 0.010f
     val barW = (size.width - gap * (n - 1)) / n
-    val capH = size.height * 0.02f
+    val capH = size.height * 0.022f
     for (i in 0 until n) {
-        val y = size.height - peaks[i].coerceIn(0f, 1f) * size.height
+        // Sit the cap a hair above the held peak so it's always a distinct
+        // floating bar, separated from the (amber) bar top below it.
+        val y = (size.height - peaks[i].coerceIn(0f, 1f) * size.height - capH).coerceAtLeast(0f)
         drawRect(color, Offset(i * (barW + gap), y), Size(barW, capH))
     }
 }
@@ -302,6 +315,46 @@ private fun DrawScope.drawScope(samples: FloatArray, color: Color) {
         drawLine(color, Offset(prevX, prevY), Offset(x, y), strokeWidth = 2.5f)
         prevX = x
         prevY = y
+    }
+}
+
+/**
+ * Colorized radial "fractal": each FFT band is a petal radiating from center,
+ * hue swept across the spectrum, drawn at several concentric counter-rotating
+ * scales for a recursive, kaleidoscopic feel.
+ */
+private fun DrawScope.drawFractal(values: FloatArray, phase: Float) {
+    if (values.isEmpty()) return
+    val n = values.size
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val maxR = minOf(size.width, size.height) / 2f * 0.95f
+    val levels = 3
+    for (level in 0 until levels) {
+        val scale = 1f - level * 0.28f
+        val rot = phase * (if (level % 2 == 0) 1f else -1f) + level * 0.5f
+        val inner = maxR * scale * 0.22f
+        val span = maxR * scale * 0.78f
+        val stroke = (size.width / n) * 0.5f * scale
+        for (b in 0 until n) {
+            val mag = values[b].coerceIn(0f, 1f)
+            // Two petals per band (mirrored) for a symmetric bloom.
+            for (mirror in 0..1) {
+                val base = (b.toFloat() / n) * PI.toFloat() // half circle...
+                val ang = if (mirror == 0) base + rot else -base + rot // ...mirrored to full
+                val r0 = inner
+                val r1 = inner + mag * span
+                val hue = ((b.toFloat() / n) * 300f + level * 40f + phase * 18f) % 360f
+                val col = Color.hsv(hue, 0.85f, 1f)
+                drawLine(
+                    color = col,
+                    start = Offset(cx + cos(ang) * r0, cy + sin(ang) * r0),
+                    end = Offset(cx + cos(ang) * r1, cy + sin(ang) * r1),
+                    strokeWidth = stroke.coerceAtLeast(2f),
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
     }
 }
 

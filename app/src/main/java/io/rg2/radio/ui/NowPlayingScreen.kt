@@ -59,6 +59,8 @@ import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
 import io.rg2.radio.data.NowPlaying
+import io.rg2.radio.data.trackArtist
+import io.rg2.radio.data.trackTitle
 import io.rg2.radio.playback.PlaybackService
 import io.rg2.radio.ui.theme.Amber
 import io.rg2.radio.ui.theme.RadioSurface
@@ -287,7 +289,7 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                np.fccLine()?.let {
+                np.placeLine()?.let {
                     Text(
                         text = it,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -298,6 +300,17 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
                 }
 
                 TrackPanel(np)
+
+                np.rdsLine()?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -309,9 +322,9 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
  */
 @Composable
 private fun TrackPanel(np: NowPlaying?) {
-    val song = np?.lyrics?.song ?: return
-    val title = song.title?.takeIf { it.isNotBlank() }
-    val artist = song.artist?.takeIf { it.isNotBlank() }
+    np ?: return
+    val title = np.trackTitle()
+    val artist = np.trackArtist()
     if (title == null && artist == null) return
 
     Spacer(Modifier.height(6.dp))
@@ -594,17 +607,26 @@ private fun rememberMediaController(): MediaController? {
 
 private fun NowPlaying?.stationName(): String {
     val np = this ?: return "—"
-    return np.rds?.ps?.takeIf { it.isNotBlank() }
-        ?: np.fcc?.call?.takeIf { it.isNotBlank() }
+    // Prefer the stable FCC call sign; the RDS PS is often a scrolling/dynamic
+    // field (e.g. "KGMOit") that flickers if shown as the station identity.
+    return np.fcc?.call?.takeIf { it.isNotBlank() }
+        ?: np.rds?.ps?.takeIf { it.isNotBlank() }
         ?: "—"
 }
 
-private fun NowPlaying?.fccLine(): String? {
+private fun NowPlaying?.placeLine(): String? {
     val np = this ?: return null
-    val parts = listOfNotNull(np.fcc?.call, np.fcc?.city, np.fcc?.state)
-    if (parts.isEmpty()) return np.rds?.rt?.takeIf { it.isNotBlank() }
-    val place = listOfNotNull(np.fcc?.city, np.fcc?.state).joinToString(", ")
-    return listOfNotNull(np.fcc?.call, place.takeIf { it.isNotBlank() }).joinToString(" · ")
+    return listOfNotNull(np.fcc?.city, np.fcc?.state).joinToString(", ").takeIf { it.isNotBlank() }
+}
+
+/** Raw RDS readout (PS / RadioText) so the live RDS feed is visible while debugging FM. */
+private fun NowPlaying?.rdsLine(): String? {
+    val rds = this?.rds ?: return null
+    val parts = listOfNotNull(
+        rds.ps?.takeIf { it.isNotBlank() },
+        rds.rt?.takeIf { it.isNotBlank() },
+    )
+    return if (parts.isEmpty()) null else "RDS · " + parts.joinToString(" · ")
 }
 
 private fun NowPlaying.currentLyric(): String? {
