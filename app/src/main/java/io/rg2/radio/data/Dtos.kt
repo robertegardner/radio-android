@@ -45,6 +45,12 @@ data class NowPlaying(
     val rds: Rds? = null,
     val caption: Caption? = null,
     val lyrics: Lyrics? = null,
+    /**
+     * Discrete now-playing track (artist/title/album/art_url) when the backend
+     * has identified the song via RDS or AcoustID; null for talk/unidentified.
+     * Prefer this over [Lyrics.song]/[Rds] for display — see [trackTitle] etc.
+     */
+    val track: Song? = null,
 )
 
 @Serializable
@@ -97,6 +103,9 @@ data class LyricLine(
 data class Song(
     val artist: String? = null,
     val title: String? = null,
+    val album: String? = null,
+    /** Cover art URL fetched server-side (iTunes), or null. */
+    @SerialName("art_url") val artUrl: String? = null,
     /** Seconds. */
     val duration: Double? = null,
     val source: String? = null,

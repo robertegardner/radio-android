@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import io.rg2.radio.RadioApp
 import io.rg2.radio.data.NowPlaying
 import io.rg2.radio.data.Stations
+import io.rg2.radio.data.coverArtUrl
 import io.rg2.radio.data.trackArtist
 import io.rg2.radio.data.trackTitle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,18 +51,28 @@ class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), Polled())
 
     /**
-     * Cover-art URL for the current track, or null when there's no song (talk
-     * content) or no art was found. Refetches only when the track changes.
+     * Cover-art URL for the current track. Prefers art the backend already
+     * fetched (now_playing.track.art_url); only falls back to the on-device
+     * iTunes lookup when the backend provides none. Null for talk/unidentified.
+     * Recomputes only when the track or its art changes.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val artworkUrl: StateFlow<String?> =
         nowPlaying
-            .map { it.data?.let { np -> SongKey(np.trackArtist(), np.trackTitle()) } }
+            .map { polled ->
+                polled.data?.let { np ->
+                    ArtRequest(np.coverArtUrl(), np.trackArtist(), np.trackTitle())
+                }
+            }
             .distinctUntilChanged()
-            .mapLatest { key ->
-                val artist = key?.artist?.takeIf { it.isNotBlank() }
-                val title = key?.title?.takeIf { it.isNotBlank() }
-                if (artist != null && title != null) artworkRepo.artworkUrl(artist, title) else null
+            .mapLatest { req ->
+                when {
+                    req == null -> null
+                    req.directUrl != null -> req.directUrl // backend already has it
+                    req.artist != null && req.title != null ->
+                        artworkRepo.artworkUrl(req.artist, req.title)
+                    else -> null
+                }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
 
@@ -80,5 +91,13 @@ class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** Identifies a track for artwork lookup / change detection. */
-private data class SongKey(val artist: String?, val title: String?)
+/**
+ * Drives artwork resolution + change detection: the backend-provided art URL if
+ * any, plus artist/title for the iTunes fallback. distinctUntilChanged on this
+ * means we only re-resolve when the track or its art actually changes.
+ */
+private data class ArtRequest(
+    val directUrl: String?,
+    val artist: String?,
+    val title: String?,
+)

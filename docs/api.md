@@ -60,26 +60,31 @@ the flat fields the original CLAUDE.md notes guessed at.
     "updated": 1780438364.87       // unix epoch seconds
   },
 
+  "track": {                       // discrete identified track (RDS or AcoustID) + server-fetched art; null when none
+    "artist": "The Doors",
+    "title": "Roadhouse Blues",
+    "album": "The Very Best of The Doors",
+    "art_url": "https://.../600x600bb.jpg",  // cover art (iTunes), or null
+    "duration": 247.0,             // seconds
+    "source": "rds",               // "rds" | "acoustid"
+    "score": null,
+    "matched_at": 1780438365.88
+  },
+
   "lyrics": {                      // LRClib synced lyrics (music FM)
     "index": 27,                   // index into lines[] of the currently-active line
     "lines": [
       { "text": "Keep your eyes on the road", "time_ms": 23770 }
       // ... synced LRC lines, time_ms from song start
     ],
-    "song": {
-      "artist": "The Doors",       // authoritative song artist/title live HERE, not in rds
-      "title": "Roadhouse Blues",
-      "duration": 247.0,           // seconds
-      "source": "rds",
-      "score": null,
-      "matched_at": 1780438365.88
-    }
+    "song": { /* same object as top-level "track" (retained for the web UI) */ }
   }
 }
 ```
 
 **Client notes**
-- For "what song is playing", prefer `lyrics.song.{artist,title}`; `rds.{artist,title}` are frequently `null`.
+- For "what song is playing" + cover art, prefer the top-level **`track`** block (artist/title/album/art_url). `lyrics.song` is the same object (kept for the web UI); `rds.{artist,title}` are frequently `null`.
+- `track` is null for talk content and when nothing is identified. Cover art is fetched server-side (iTunes) only for music.
 - `mode` selects the secondary pane: `captions` → show `caption.text`; `lyrics` → show synced `lyrics.lines` highlighting `lyrics.index`; `idle` → show neither.
 - `caption`, `lyrics`, `lyrics.song`, and `fcc` may all be absent/null depending on band and state — make every nested object optional/nullable.
 - Ignore `hd_*` — no HD UI (per CLAUDE.md).
