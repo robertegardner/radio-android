@@ -82,6 +82,7 @@ class PlaybackService : MediaLibraryService() {
 
         player.addListener(ReconnectListener())
         player.addListener(MetadataUpdater())
+        container.audioSessionId.value = player.audioSessionId
 
         // Session drives the live-stream wrapper so pause/resume (from the UI,
         // lock-screen, or notification) rejoin the live edge instead of
@@ -136,6 +137,11 @@ class PlaybackService : MediaLibraryService() {
     private inner class MetadataUpdater : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) startMetadataUpdates() else stopMetadataUpdates()
+        }
+
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            // Publish for the reactive visualizer to attach to.
+            container.audioSessionId.value = audioSessionId
         }
     }
 

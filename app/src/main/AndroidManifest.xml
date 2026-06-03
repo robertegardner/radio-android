@@ -11,6 +11,10 @@
     <!-- ExoPlayer setWakeMode(WAKE_MODE_NETWORK) acquires a wake lock to keep
          streaming with the screen off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Reactive audio visualizer (android.media.audiofx.Visualizer) taps the
+         audio output and so requires RECORD_AUDIO. Only used if the user picks
+         the Reactive visualizer; remove this if we drop that option. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Runtime permission on API 33+ for the media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

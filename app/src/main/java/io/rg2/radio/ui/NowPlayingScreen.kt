@@ -4,6 +4,7 @@ import android.content.ComponentName
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +31,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +51,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import io.rg2.radio.RadioApp
 import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
@@ -71,8 +75,14 @@ fun NowPlayingRoute(
     val controller = rememberMediaController()
     val nowPlaying by viewModel.nowPlaying.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+    val audioSessionId by (context.applicationContext as RadioApp)
+        .container.audioSession.collectAsStateWithLifecycle()
+
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
+    var captionsOn by rememberSaveable { mutableStateOf(true) }
+    var reactiveViz by rememberSaveable { mutableStateOf(false) }
 
     DisposableEffect(controller) {
         val c = controller ?: return@DisposableEffect onDispose {}
@@ -95,6 +105,11 @@ fun NowPlayingRoute(
         isPlaying = isPlaying,
         isBuffering = isBuffering,
         enabled = controller != null,
+        captionsOn = captionsOn,
+        onToggleCaptions = { captionsOn = it },
+        reactiveViz = reactiveViz,
+        onReactiveChange = { reactiveViz = it },
+        audioSessionId = audioSessionId,
         onPlayPause = {
             val c = controller ?: return@NowPlayingScreen
             when {
@@ -127,6 +142,11 @@ private fun NowPlayingScreen(
     isPlaying: Boolean,
     isBuffering: Boolean,
     enabled: Boolean,
+    captionsOn: Boolean,
+    onToggleCaptions: (Boolean) -> Unit,
+    reactiveViz: Boolean,
+    onReactiveChange: (Boolean) -> Unit,
+    audioSessionId: Int,
     onPlayPause: () -> Unit,
     onSelectFavorite: (Favorite) -> Unit,
     modifier: Modifier = Modifier,
@@ -142,7 +162,15 @@ private fun NowPlayingScreen(
     ) {
         StatusHeader(state)
         TunerDisplay(np)
-        ProgramPane(np)
+        ProgramPane(
+            np = np,
+            captionsOn = captionsOn,
+            onToggleCaptions = onToggleCaptions,
+            reactiveViz = reactiveViz,
+            onReactiveChange = onReactiveChange,
+            isPlaying = isPlaying,
+            audioSessionId = audioSessionId,
+        )
         TransportButton(
             isPlaying = isPlaying,
             isBuffering = isBuffering,
@@ -236,6 +264,25 @@ private fun TunerDisplay(np: NowPlaying?) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+
+            // Song / lyric info lives here so the program pane is free for
+            // captions or the visualizer.
+            np?.let { n ->
+                n.songLine()?.let {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                n.currentLyric()?.let {
+                    Text(text = it, color = Amber, fontSize = 14.sp)
+                }
+            }
         }
     }
 }
@@ -253,39 +300,67 @@ private fun BandChip(band: Band?) {
     }
 }
 
-/** Captions for talk (Cardinals play-by-play), else song info for music. */
+/**
+ * Live captions (Cardinals play-by-play) when the CC toggle is on and captions
+ * are available; otherwise the audio visualizer fills the space. Song/lyric
+ * info lives in the tuner display, so it's preserved either way.
+ */
 @Composable
-private fun ProgramPane(np: NowPlaying?) {
-    np ?: return
-    val caption = np.caption?.text?.takeIf { np.mode == "captions" && it.isNotBlank() }
-    when {
-        caption != null -> InfoCard {
-            SectionLabel("LIVE CAPTIONS")
+private fun ProgramPane(
+    np: NowPlaying?,
+    captionsOn: Boolean,
+    onToggleCaptions: (Boolean) -> Unit,
+    reactiveViz: Boolean,
+    onReactiveChange: (Boolean) -> Unit,
+    isPlaying: Boolean,
+    audioSessionId: Int,
+) {
+    val caption = np?.caption?.text?.takeIf { np.mode == "captions" && it.isNotBlank() }
+    val showCaption = captionsOn && caption != null
+
+    InfoCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel(if (showCaption) "LIVE CAPTIONS" else "VISUALIZER")
+            Spacer(Modifier.weight(1f))
+            CaptionToggle(captionsOn, onToggleCaptions)
+        }
+        if (showCaption) {
             Text(
-                text = caption,
+                text = caption!!,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 17.sp,
                 lineHeight = 24.sp,
             )
-        }
-
-        np.songLine() != null -> InfoCard {
-            SectionLabel("NOW PLAYING")
-            Text(
-                text = np.lyrics?.song?.title ?: np.songLine()!!,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        } else {
+            VisualizerPane(
+                reactive = reactiveViz,
+                onReactiveChange = onReactiveChange,
+                isPlaying = isPlaying,
+                audioSessionId = audioSessionId,
             )
-            np.lyrics?.song?.artist?.takeIf { it.isNotBlank() }?.let {
-                Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
-            }
-            np.currentLyric()?.let {
-                Text(text = it, color = Amber, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            }
         }
+    }
+}
+
+@Composable
+private fun CaptionToggle(on: Boolean, onChange: (Boolean) -> Unit) {
+    val bg = if (on) Amber else MaterialTheme.colorScheme.surface
+    val fg = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, if (on) Amber else MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable { onChange(!on) }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = if (on) "CC ON" else "CC OFF",
+            color = fg,
+            fontSize = 12.sp,
+            letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

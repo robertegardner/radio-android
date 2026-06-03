@@ -5,6 +5,8 @@ import io.rg2.radio.data.InMemoryRadioSettings
 import io.rg2.radio.data.NowPlayingRepository
 import io.rg2.radio.data.RadioApi
 import io.rg2.radio.data.RadioSettings
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Application entry point. Owns the app-wide singletons via [container]. No DI
@@ -34,4 +36,12 @@ class AppContainer {
     val api: RadioApi = RadioApi({ settings })
 
     val nowPlayingRepository: NowPlayingRepository = NowPlayingRepository(api)
+
+    /**
+     * The active ExoPlayer audio session id, published by PlaybackService and
+     * consumed by the reactive visualizer to attach a [android.media.audiofx.Visualizer].
+     * 0 means "not yet known".
+     */
+    val audioSessionId: MutableStateFlow<Int> = MutableStateFlow(0)
+    val audioSession: StateFlow<Int> get() = audioSessionId
 }
