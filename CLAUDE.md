@@ -10,13 +10,45 @@ attic Raspberry Pi and is exposed at **`https://radio.rg2.io`**. The app tunes
 stations, plays the live Icecast stream, and shows now-playing metadata —
 remotely, from a phone or a Chromebook, over the internet.
 
-This repo is **client-only**. It owns no hardware, runs no SDR, and contains no
-Python. It talks to the existing backend over HTTP(S). The backend lives in a
-separate repo (`github.com/robertegardner/radio`) and is not modified from here.
+This repo is **client-only** by default: it owns no hardware, runs no SDR, and
+contains no Python. It talks to the existing backend over HTTP(S). The backend
+lives in a separate repo (`github.com/robertegardner/radio`). Don't touch the
+backend from a normal session — **except** when Bob explicitly asks for
+coordinated cross-repo work (e.g. adding an API field the app needs). For that,
+the backend is cloned at `~/projects/radio` and the Pi is reachable at
+`ssh radio.srvr`; deploy with surgical service restarts and **test on the live
+box before committing** (backend convention). See the `backend-access` memory.
 
 **Primary use case (drives every priority decision): St. Louis Cardinals
 baseball**, a lot of it listened to in the car. That single fact is why this is
 a native app and not a web wrapper — see below.
+
+## Current state (2026-06-03)
+
+The greenfield scaffold is long done; the app is substantially built and
+device-verified. Implemented:
+
+- **Playback** (Media3): background audio, lock-screen/notification transport,
+  live-edge pause/resume, reconnect-on-error. Android Auto browse tree exists
+  but is **untested on Auto** (needs the Desktop Head Unit).
+- **Now-playing**: ViewModel + StateFlow polling; live metadata pumped into the
+  media session so the notification tracks what's on air.
+- **UI** (amber-LCD `ui/theme`): tuner panel with **album art** behind it, a
+  **Track ID tile** (artist/title/album + a source badge RDS/CHROMAPRINT/LYRIC
+  MATCH + a raw RDS readout), a captions toggle, and audio **visualizers**
+  (BARS/PEAKS/MIRROR/SCOPE/FRACTAL/SYNTH; reactive ones use the real FFT via
+  `RECORD_AUDIO`).
+- **Build/version**: `v<ver> · <git sha>` (with `-dirty`) shown under the header
+  via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
+  `app/build.gradle.kts`) — use it to confirm which build is on a test device.
+- **Networking**: OkHttp + kotlinx.serialization, app-level `AppContainer` in
+  `RadioApp` holding the shared client/settings/repositories.
+
+**Not started:** the encrypted settings/credentials store + settings screen
+(currently `InMemoryRadioSettings`, default base URL, no auth).
+
+Backend song identification (RDS → AcoustID → lyric match) and its known
+song-boundary limitation are in the `song-id-pipeline` memory.
 
 ## Why native (not a PWA)
 
@@ -61,33 +93,21 @@ Don't get bitten by modern FGS rules:
 
 Base URL: `https://radio.rg2.io`  ·  Stream: `https://icecast.rg2.io/fm.mp3`
 
-> **FIRST TASK, before writing any networking code:** curl the live endpoints
-> and model the **real** JSON. The field names below are from the backend's
-> own notes and may be incomplete or slightly off — confirm them against actual
-> responses. The read endpoints are public (no auth), so this works immediately
-> from the VM:
->
-> ```bash
-> curl -s https://radio.rg2.io/api/now_playing | jq
-> curl -s https://radio.rg2.io/api/stations    | jq
-> ```
->
-> For the tune endpoint and its exact request body, either observe the web UI's
-> network calls or have Bob paste the `/api/tune` handler from the backend's
-> `app.py`. Don't invent the schema.
+> **The verified schemas live in `docs/api.md`** — modeled from real responses
+> and kept current (it documents the discrete `now_playing.track` block:
+> `{artist,title,album,art_url,source}` with server-fetched cover art, which the
+> app prefers over its iTunes fallback). The tune body is `{freq, band, hd,
+> subchannel}` (key is `band` = `"fm"`/`"am"`, **not** `mode`/`wbfm`). Re-curl
+> the live endpoints if anything looks off; the read endpoints are public.
 
 | Endpoint | Method | Use | Notes |
 |---|---|---|---|
-| `/api/now_playing` | GET | poll ~1s | RDS station/artist/title, plus caption/lyric state and HD flags. The single feed for the "now playing" UI. |
+| `/api/now_playing` | GET | poll ~1s | RDS + caption/lyric state + the discrete `track` block (artist/title/album/art_url/source). The single feed for the now-playing UI. |
 | `/api/stations` | GET | poll ~30s | Scanned FM + AM station list. Drives the station browser. |
-| `/api/tune` | POST | on user action | JSON body writes the backend's `active.env` and restarts the stream. **Confirm exact body.** Likely carries `mode` (`wbfm`/`fm`/`am`), `freq`, and possibly `hd`/`subchannel` fields (HD is moot — see below). |
-| `/radio` | — | reference | The existing web tuner UI. Mine it for behavior/field names. |
+| `/api/tune` | POST | on user action | JSON `{freq, band, hd, subchannel}`; writes `active.env` and restarts the stream. Returns `{ok, error}`. |
+| `/api/status` | GET | confirm tune | Lightweight current band/freq/status. |
+| `/radio` | — | reference | The existing web tuner UI. |
 | `/` (admin) | — | n/a | Admin UI; not something the app should drive. |
-
-**Expected-ish `now_playing` fields (verify):** RDS station name (PS), artist,
-title; caption/lyric mode (`idle` / `captions` / `lyrics`) with transcript or
-synced LRC lines; and HD status flags `hd_probing` / `hd_locked` /
-`hd_unavailable`.
 
 ## Auth and transport constraints
 
@@ -164,9 +184,10 @@ adb logcat --pid=$(adb shell pidof io.rg2.radio)   # app logs
 - **Test on a device; there is no CI.** The device is the test environment.
 - **Commits go out via the VM's own SSH key** (generated during VM bootstrap;
   added to GitHub).
-- **Stay in your lane.** This repo never touches the backend's `/srv/radio` /
-  `/opt/sdr-tuner` or the scanner repo. (Different machine entirely, but keep
-  the discipline.)
+- **Stay in your lane by default.** Don't touch the backend's `/srv/radio` /
+  `/opt/sdr-tuner` or the scanner repo on a normal session. The exception is
+  explicit cross-repo requests from Bob (see the intro + `backend-access`
+  memory); otherwise keep the discipline.
 
 ## What's not in git (gitignore)
 
@@ -177,12 +198,17 @@ adb logcat --pid=$(adb shell pidof io.rg2.radio)   # app logs
   DataStore on the device, never in the repo).
 - `.idea/` (if Android Studio is ever opened against this), `*.iml`.
 
-## Open questions for the first build session
+## Remaining work / next up
 
-1. Confirm the exact JSON shapes for all three endpoints by curling the live
-   server (see "FIRST TASK").
-2. Confirm `/api/tune` request body, and whether NPMplus auth is live yet.
-3. Networking lib decision: OkHttp + kotlinx.serialization vs Retrofit.
-4. Android Auto browse-tree design (favorites list → tap to tune).
-5. Lock in the package name and the on-VM repo location (e.g.
-   `~/projects/radio-android`).
+Resolved during build: endpoint schemas (`docs/api.md`), tune body
+(`{freq,band,hd,subchannel}`), OkHttp + kotlinx.serialization (chosen over
+Retrofit), Android Auto browse tree (built; **untested on Auto**), package
+`io.rg2.radio`, repo at `~/radio-android`. Still open:
+
+1. **Settings/credentials screen** + encrypted store (EncryptedSharedPreferences/
+   DataStore) to replace `InMemoryRadioSettings`; NPMplus auth still not enforced
+   on `/api/tune`, but build for when it lands.
+2. **Android Auto verification** via the Desktop Head Unit / a real head unit.
+3. **Song-ID lifecycle** (backend): the identified track lands late and lingers
+   through ads into the next song — see the `song-id-pipeline` memory for the
+   problem and improvement ideas (RDS-boundary clear, re-confirmation, etc.).
