@@ -35,6 +35,12 @@ data class Favorite(
 object Favorites {
     const val ROOT_ID = "root"
 
+    /**
+     * mediaId for "play whatever the backend is currently tuned to" — the live
+     * Icecast stream without issuing a tune. Lets Play work from a cold start.
+     */
+    const val LIVE_ID = "live"
+
     val SEED: List<Favorite> = listOf(
         Favorite(Band.AM, 1120.0, "KMOX 1120", "St. Louis · Cardinals flagship"),
         Favorite(Band.AM, 1230.0, "KZYM 1230", "Cape Girardeau · Cardinals affiliate"),

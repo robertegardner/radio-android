@@ -229,12 +229,16 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MutableList<MediaItem>> {
             val resolved = mediaItems.map { item ->
                 val fav = Favorite.fromMediaId(item.mediaId)
-                if (fav != null) {
-                    tune(fav)
-                    streamItem(fav)
-                } else {
+                when {
+                    fav != null -> {
+                        tune(fav)
+                        streamItem(fav)
+                    }
+                    // Play the current station without retuning (cold-start Play).
+                    item.mediaId == Favorites.LIVE_ID -> liveStreamItem()
                     // Already-resolved item (has a URI) — pass through unchanged.
-                    item
+                    item.localConfiguration != null -> item
+                    else -> liveStreamItem()
                 }
             }.toMutableList()
             return Futures.immediateFuture(resolved)
@@ -271,6 +275,22 @@ class PlaybackService : MediaLibraryService() {
         MediaItem.Builder()
             .setMediaId(fav.mediaId)
             .setMediaMetadata(stationMetadata(fav, browsable = true))
+            .build()
+
+    /** Generic live-stream item (no favorite, no tune); metadata fills in from the pump. */
+    private fun liveStreamItem(): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(Favorites.LIVE_ID)
+            .setUri(RadioSettings.DEFAULT_STREAM_URL)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle("Radio")
+                    .setStation("Radio")
+                    .setIsBrowsable(false)
+                    .setIsPlayable(true)
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+                    .build(),
+            )
             .build()
 
     /** Playable representation backed by the Icecast stream URI. */
