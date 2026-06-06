@@ -6,6 +6,8 @@ import io.rg2.radio.data.InMemoryRadioSettings
 import io.rg2.radio.data.NowPlayingRepository
 import io.rg2.radio.data.RadioApi
 import io.rg2.radio.data.RadioSettings
+import io.rg2.radio.data.ScannerApi
+import io.rg2.radio.data.ScannerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
@@ -43,6 +45,11 @@ class AppContainer {
     val nowPlayingRepository: NowPlayingRepository = NowPlayingRepository(api)
 
     val artworkRepository: ArtworkRepository = ArtworkRepository(httpClient)
+
+    /** EMS/ATC scanner backend (separate Pi service). Shares the HTTP client. */
+    val scannerApi: ScannerApi = ScannerApi({ settings }, httpClient)
+
+    val scannerRepository: ScannerRepository = ScannerRepository(scannerApi)
 
     /**
      * The active ExoPlayer audio session id, published by PlaybackService and

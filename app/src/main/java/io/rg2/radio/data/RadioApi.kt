@@ -1,20 +1,14 @@
 package io.rg2.radio.data
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /** Thrown for transport failures and unexpected (non-handled) HTTP statuses. */
 class RadioApiException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -110,22 +104,5 @@ class RadioApi(
             // stalled poll fails fast rather than piling up.
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
-    }
-}
-
-/** Suspend bridge over OkHttp's async [Call], cancelling the call on coroutine cancellation. */
-private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
-    enqueue(object : Callback {
-        override fun onResponse(call: Call, response: Response) = cont.resume(response)
-        override fun onFailure(call: Call, e: IOException) {
-            if (cont.isCancelled) return
-            cont.resumeWithException(RadioApiException("request failed: ${e.message}", e))
-        }
-    })
-    cont.invokeOnCancellation {
-        try {
-            cancel()
-        } catch (_: Throwable) {
-        }
     }
 }

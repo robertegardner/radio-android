@@ -139,6 +139,19 @@ class PlaybackService : MediaLibraryService() {
             if (isPlaying) startMetadataUpdates() else stopMetadataUpdates()
         }
 
+        /**
+         * Switching source mid-playback (radio ⇄ scanner) keeps `isPlaying` true,
+         * so re-evaluate the pump on item changes: scanner items carry their own
+         * metadata (stop the radio pump), radio items resume it.
+         */
+        override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+            if (item?.mediaId?.startsWith(SCANNER_PREFIX) == true) {
+                stopMetadataUpdates()
+            } else if (player.isPlaying) {
+                startMetadataUpdates()
+            }
+        }
+
         override fun onAudioSessionIdChanged(audioSessionId: Int) {
             // Publish for the reactive visualizer to attach to.
             container.audioSessionId.value = audioSessionId
@@ -147,6 +160,9 @@ class PlaybackService : MediaLibraryService() {
 
     private fun startMetadataUpdates() {
         if (metadataJob?.isActive == true) return
+        // The scanner streams carry their own metadata; don't pump the FM/AM
+        // radio's now_playing feed over them.
+        if (player.currentMediaItem?.mediaId?.startsWith(SCANNER_PREFIX) == true) return
         metadataJob = scope.launch {
             repo.nowPlaying().collect { result ->
                 val np = result.getOrNull() ?: return@collect
@@ -245,6 +261,10 @@ class PlaybackService : MediaLibraryService() {
                         tune(fav)
                         streamItem(fav)
                     }
+                    // Scanner stream/recording: the controller carries the target
+                    // URL in request metadata (survives IPC); resolve it here so
+                    // the shared session plays it like any other item.
+                    item.mediaId.startsWith(SCANNER_PREFIX) -> scannerItem(item)
                     // Play the current station without retuning (cold-start Play).
                     item.mediaId == Favorites.LIVE_ID -> liveStreamItem()
                     // Already-resolved item (has a URI) — pass through unchanged.
@@ -288,6 +308,21 @@ class PlaybackService : MediaLibraryService() {
             .setMediaMetadata(stationMetadata(fav, browsable = true))
             .build()
 
+    /**
+     * Resolve a scanner item the controller sent. The playable URL rides in
+     * [MediaItem.requestMetadata] (`mediaUri`), which — unlike `localConfiguration`
+     * — is preserved across the controller→session IPC, so we rebuild the item
+     * with it as the URI. The controller-supplied [MediaMetadata] (source label /
+     * talkgroup) is kept as-is; the radio metadata pump is gated off for these.
+     */
+    private fun scannerItem(item: MediaItem): MediaItem {
+        val uri = item.requestMetadata.mediaUri
+            ?: return item // nothing to play; pass through (will no-op)
+        return item.buildUpon()
+            .setUri(uri)
+            .build()
+    }
+
     /** Generic live-stream item (no favorite, no tune); metadata fills in from the pump. */
     private fun liveStreamItem(): MediaItem =
         MediaItem.Builder()
@@ -326,5 +361,8 @@ class PlaybackService : MediaLibraryService() {
         private const val TAG = "PlaybackService"
         private const val MAX_RECONNECTS = 5
         private const val RECONNECT_DELAY_MS = 2_000L
+
+        /** mediaId prefix for EMS/ATC scanner streams + recordings (see ui.ScannerScreen). */
+        const val SCANNER_PREFIX = "scanner:"
     }
 }

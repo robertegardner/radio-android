@@ -671,7 +671,7 @@ private fun DrawScope.drawPause(color: androidx.compose.ui.graphics.Color) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun rememberMediaController(): MediaController? {
+internal fun rememberMediaController(): MediaController? {
     val context = LocalContext.current
     var controller by remember { mutableStateOf<MediaController?>(null) }
     DisposableEffect(Unit) {
