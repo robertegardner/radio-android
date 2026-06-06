@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "radio-android"
 include(":app")
+include(":core")
+include(":wear")

@@ -2,12 +2,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
 }
 
-/** Short git SHA of the working tree at build time, with a -dirty suffix for
- *  uncommitted changes — surfaced in the UI so test devices can be matched to a
- *  build. Uses providers.exec so it stays configuration-cache compatible. */
+/** Short git SHA at build time (matches :app) so a watch build can be identified. */
 fun gitRevision(): String {
     fun exec(vararg cmd: String): String =
         providers.exec { commandLine(*cmd) }.standardOutput.asText.get().trim()
@@ -22,13 +19,14 @@ fun gitRevision(): String {
 }
 
 android {
-    namespace = "io.rg2.radio"
+    namespace = "io.rg2.radio.wear"
     compileSdk = 36
 
     defaultConfig {
+        // Same applicationId as the phone app: this is its Wear OS counterpart.
         applicationId = "io.rg2.radio"
-        minSdk = 26
-        targetSdk = 36
+        minSdk = 30          // Wear OS 3+
+        targetSdk = 34       // current Wear OS platform
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "GIT_SHA", "\"${gitRevision()}\"")
@@ -58,36 +56,24 @@ android {
 }
 
 dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.activity.compose)
+    // Shared radio + scanner data/networking layer.
+    implementation(project(":core"))
 
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // Jetpack Compose (shared BOM) + Compose for Wear OS (its own Material).
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.wear.compose.material)
+    implementation(libs.androidx.wear.compose.foundation)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // Shared data/networking layer (DTOs, radio + scanner clients, settings,
-    // repositories) — also consumed by :wear. Exposes OkHttp / serialization /
-    // coroutines transitively via `api`.
-    implementation(project(":core"))
-
-    // Networking — OkHttp + kotlinx.serialization (house style: minimal deps,
-    // no Retrofit). See docs/api.md for the schemas these model.
-    implementation(libs.okhttp)
-    implementation(libs.kotlinx.serialization.json)
-    implementation(libs.kotlinx.coroutines.android)
-
-    // Media3: ExoPlayer for the Icecast MP3 stream + MediaLibraryService for
-    // the media session (lock-screen/notification transport) and the Android
-    // Auto browse tree.
+    // Media3: the watch runs its own ExoPlayer + media session (standalone).
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
-
-    // Album-art image loading (remote cover art from the iTunes Search API).
-    implementation(libs.coil.compose)
 }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Wear apps render through Compose; this just gives a black, no-titlebar
+         host window (DeviceDefault is the Wear system theme). -->
+    <style name="Theme.RadioWear" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+    </style>
+</resources>
