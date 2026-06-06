@@ -59,10 +59,16 @@ fun RadioWearApp(vm: WearViewModel = viewModel()) {
     val scannerStatus by vm.scannerStatus.collectAsStateWithLifecycle()
 
     var isPlaying by remember { mutableStateOf(false) }
+    // True from "user picked a source" until audio actually starts — covers the
+    // post-tune stream-restart gap so the UI doesn't look dead.
+    var starting by remember { mutableStateOf(false) }
 
     DisposableEffect(controller) {
         val c = controller ?: return@DisposableEffect onDispose {}
-        fun sync() { isPlaying = c.isPlaying }
+        fun sync() {
+            isPlaying = c.isPlaying
+            if (c.isPlaying) starting = false
+        }
         sync()
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) = sync()
@@ -76,6 +82,7 @@ fun RadioWearApp(vm: WearViewModel = viewModel()) {
     LaunchedEffect(controller) {
         val c = controller ?: return@LaunchedEffect
         vm.playback.collect { cmd ->
+            starting = true
             val item = when (cmd) {
                 is WearPlayback.PlayFavorite ->
                     MediaItem.Builder().setMediaId(cmd.favorite.mediaId).build()
@@ -105,13 +112,24 @@ fun RadioWearApp(vm: WearViewModel = viewModel()) {
             modifier = Modifier.fillMaxWidth(),
             state = listState,
         ) {
-            item { NowPlayingHeader(nowPlaying, ui.message) }
+            item { NowPlayingHeader(nowPlaying, ui.message, connecting = starting && !isPlaying) }
             item {
                 Button(
                     onClick = {
                         val c = controller ?: return@Button
-                        if (c.currentMediaItem == null) return@Button
-                        if (c.isPlaying) c.pause() else c.play()
+                        when {
+                            // Cold start: stream the current tuning, no retune.
+                            c.currentMediaItem == null -> {
+                                starting = true
+                                c.setMediaItem(
+                                    MediaItem.Builder().setMediaId(WearPlaybackService.LIVE_ID).build(),
+                                )
+                                c.prepare()
+                                c.play()
+                            }
+                            c.isPlaying -> c.pause()
+                            else -> c.play()
+                        }
                     },
                     enabled = controller != null,
                 ) {
@@ -173,7 +191,7 @@ fun RadioWearApp(vm: WearViewModel = viewModel()) {
 }
 
 @Composable
-private fun NowPlayingHeader(np: NowPlaying?, message: String) {
+private fun NowPlayingHeader(np: NowPlaying?, message: String, connecting: Boolean) {
     val station = np?.rds?.ps?.takeIf { it.isNotBlank() }
         ?: np?.fcc?.call?.takeIf { it.isNotBlank() }
     val title = np?.trackTitle()
@@ -199,7 +217,11 @@ private fun NowPlayingHeader(np: NowPlaying?, message: String) {
             else -> "Pick a source below"
         }
         Text(
-            text = if (message.isNotBlank()) message else line,
+            text = when {
+                message.isNotBlank() -> message
+                connecting -> "Connecting…"
+                else -> line
+            },
             color = MaterialTheme.colors.onBackground,
             style = MaterialTheme.typography.body2,
             textAlign = TextAlign.Center,

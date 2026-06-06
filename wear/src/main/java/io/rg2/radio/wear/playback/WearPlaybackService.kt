@@ -88,8 +88,12 @@ class WearPlaybackService : MediaSessionService() {
                 return
             }
             val attempt = ++reconnectAttempts
+            // After a tune the backend restarts the stream and the Icecast mount
+            // 404s for a while; retry at a short FIXED cadence so we rejoin as
+            // soon as it returns instead of waiting out a long backoff step.
+            Log.i(TAG, "stream error (${error.errorCodeName}); reconnect #$attempt")
             scope.launch {
-                delay(RECONNECT_DELAY_MS * attempt)
+                delay(RECONNECT_DELAY_MS)
                 player.prepare()
                 player.play()
             }
@@ -114,8 +118,11 @@ class WearPlaybackService : MediaSessionService() {
                         streamItem(fav)
                     }
                     item.mediaId.startsWith(SCANNER_PREFIX) -> scannerItem(item)
+                    // Cold-start Play: stream whatever the backend is currently
+                    // tuned to, no retune.
+                    item.mediaId == LIVE_ID -> liveStreamItem()
                     item.localConfiguration != null -> item
-                    else -> item
+                    else -> liveStreamItem()
                 }
             }.toMutableList()
             return Futures.immediateFuture(resolved)
@@ -149,12 +156,27 @@ class WearPlaybackService : MediaSessionService() {
         return item.buildUpon().setUri(uri).build()
     }
 
+    /** The FM stream as-is (cold-start Play), no tune. */
+    private fun liveStreamItem(): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(LIVE_ID)
+            .setUri(RadioSettings.DEFAULT_STREAM_URL)
+            .setMediaMetadata(
+                MediaMetadata.Builder().setTitle("Radio").setStation("Radio").setIsPlayable(true).build(),
+            )
+            .build()
+
     companion object {
         private const val TAG = "WearPlaybackService"
-        private const val MAX_RECONNECTS = 5
-        private const val RECONNECT_DELAY_MS = 2_000L
+        // The post-tune stream restart can 404 for ~25-30s; cover it with many
+        // short retries rather than a few slow ones.
+        private const val MAX_RECONNECTS = 25
+        private const val RECONNECT_DELAY_MS = 1_500L
 
         /** mediaId prefix for scanner streams (URL carried in requestMetadata.mediaUri). */
         const val SCANNER_PREFIX = "scanner:"
+
+        /** mediaId for "stream the current tuning" (cold-start Play, no tune). */
+        const val LIVE_ID = "live"
     }
 }
