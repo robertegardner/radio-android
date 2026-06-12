@@ -42,8 +42,9 @@ device-verified. Implemented:
   presets, tap pane = next preset, 30 s auto-advance; chip hides itself
   without GLES3 or the native lib. See `docs/web-visualizer.md` (history: the
   backend web UI's Butterchurn equivalent) and "Native build (MILKDROP)"
-  below. **Device-untested as of 2026-06-12** — builds clean, needs a
-  sideload pass.
+  below. Device-verified 2026-06-12 (sideload; note an old installed build
+  signed with a different debug key silently blocked the update — uninstall
+  first when the version label under the header doesn't change).
 - **Build/version**: `v<ver> · <git sha>` (with `-dirty`) shown under the header
   via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
