@@ -3,6 +3,7 @@ package io.rg2.radio
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import io.rg2.radio.audio.AudioTapHub
 import io.rg2.radio.audio.DuckStatus
 import io.rg2.radio.data.ArtworkRepository
 import io.rg2.radio.data.InMemoryRadioSettings
@@ -61,6 +62,13 @@ class AppContainer(private val prefs: SharedPreferences) {
      */
     val audioSessionId: MutableStateFlow<Int> = MutableStateFlow(0)
     val audioSession: StateFlow<Int> get() = audioSessionId
+
+    /**
+     * The single shared Visualizer tap on that session — viz styles and the
+     * duck classifier all consume through here (a second Visualizer instance
+     * on one session fails on real devices; never construct one directly).
+     */
+    val audioTap: AudioTapHub = AudioTapHub()
 
     /**
      * "Duck on talk" option: near-mute the stream during talk/commercial

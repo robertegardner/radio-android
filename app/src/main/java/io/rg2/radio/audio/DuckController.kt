@@ -1,7 +1,5 @@
 package io.rg2.radio.audio
 
-import android.media.audiofx.Visualizer
-import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import io.rg2.radio.AppContainer
@@ -12,23 +10,23 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * "Duck on talk": when enabled, watches the playing stream through its own
- * `Visualizer` FFT tap, classifies music vs talk ([TalkMusicClassifier]), and
- * ramps the player volume to a near-mute during talk/commercial stretches with
- * a fast ramp back up the moment music returns.
+ * "Duck on talk": when enabled, watches the playing stream through the shared
+ * [AudioTapHub] FFT feed, classifies music vs talk ([TalkMusicClassifier]),
+ * and ramps the player volume to a near-mute during talk/commercial stretches
+ * with a fast ramp back up the moment music returns.
  *
  * Lives in PlaybackService (not the UI) so it keeps working with the screen
  * off. Only ever ducks the FM/AM radio stream — scanner items are talk the
  * user chose to hear. Needs RECORD_AUDIO (same grant as the reactive
- * visualizers); without it the tap fails and the feature reports inactive.
+ * visualizers); without it the tap fails and the status says so.
  */
 class DuckController(
     private val player: Player,
     private val container: AppContainer,
     private val scope: CoroutineScope,
-) : Player.Listener {
+) : Player.Listener, AudioTapHub.Consumer {
 
-    private var visualizer: Visualizer? = null
+    private var attached = false
     private var rampJob: Job? = null
     private var ducked = false
 
@@ -46,6 +44,9 @@ class DuckController(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = refresh()
 
+    /** AudioTapHub.Consumer — FFT frames feed the classifier. */
+    override fun onFft(fft: ByteArray) = classifier.onFft(fft)
+
     fun release() {
         player.removeListener(this)
         detach(restoreVolume = false) // player is being torn down anyway
@@ -61,52 +62,33 @@ class DuckController(
             player.isPlaying &&
             isRadioItem()
         when {
-            want && visualizer == null -> attach(container.audioSession.value)
-            !want && visualizer != null -> detach(restoreVolume = true)
+            want && !attached -> attach(container.audioSession.value)
+            !want && attached -> detach(restoreVolume = true)
         }
         if (!want) container.duckStatus.value = DuckStatus(active = false)
     }
 
     private fun attach(sessionId: Int) {
         classifier.reset()
-        visualizer = runCatching {
-            Visualizer(sessionId).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(1024)
-                setDataCaptureListener(
-                    object : Visualizer.OnDataCaptureListener {
-                        override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, rate: Int) = Unit
-
-                        override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
-                            fft?.let(classifier::onFft)
-                        }
-                    },
-                    Visualizer.getMaxCaptureRate(),
-                    /* waveform = */ false,
-                    /* fft = */ true,
-                )
-                enabled = true
-            }
-        }.onFailure {
-            Log.w(TAG, "duck tap unavailable (RECORD_AUDIO not granted, or Visualizer busy)", it)
-        }.getOrNull()
-        if (visualizer != null) {
-            container.duckStatus.value = DuckStatus(active = true, state = DuckState.MUSIC, score = 0f)
+        attached = true
+        val tapLive = container.audioTap.acquire(sessionId, this)
+        container.duckStatus.value = if (tapLive) {
+            DuckStatus(active = true, state = DuckState.MUSIC, score = 0f)
+        } else {
+            DuckStatus(active = false, note = "audio tap unavailable (mic permission?)")
         }
     }
 
     private fun detach(restoreVolume: Boolean) {
-        visualizer?.let {
-            runCatching { it.enabled = false }
-            runCatching { it.release() }
-        }
-        visualizer = null
+        if (attached) container.audioTap.release(this)
+        attached = false
         ducked = false
         if (restoreVolume) rampTo(1f, UNDUCK_RAMP_MS)
     }
 
-    /** Classifier verdict (capture thread = main looper here). */
+    /** Classifier verdict (tap callbacks land on the main looper). */
     private fun apply(state: DuckState, score: Float) {
-        if (visualizer == null) return
+        if (!attached) return
         container.duckStatus.value = DuckStatus(active = true, state = state, score = score)
         val wantDuck = state == DuckState.TALK
         if (wantDuck != ducked) {
@@ -130,7 +112,6 @@ class DuckController(
     }
 
     private companion object {
-        const val TAG = "DuckController"
         const val DUCK_VOLUME = 0.07f     // "nearly muted"
         const val DUCK_RAMP_MS = 1_200L   // easing down can be gentle
         const val UNDUCK_RAMP_MS = 250L   // music is back — get out of the way

@@ -56,10 +56,12 @@ device-verified. Implemented:
   tuning surface; weights/thresholds are named constants in the classifier.
   Known blind spot: commercials with full music beds read as music — the fix
   is fusing `/api/now_playing` hints (captions mode = talk, track-ID = music)
-  later. Needs RECORD_AUDIO (same grant as the reactive viz). NOTE: this adds
-  a second concurrent Visualizer instance when a reactive viz style is shown —
-  worked-as-designed needs device confirmation; if a device refuses two taps
-  on one session, refactor to a shared single-Visualizer hub.
+  later. Needs RECORD_AUDIO (same grant as the reactive viz). The
+  two-concurrent-Visualizers risk was REAL (duck reported "waiting for
+  playback" whenever a viz style was on screen — the second instance failed
+  to create): fixed with `audio/AudioTapHub`, the ONE Visualizer per session,
+  fanned out to all consumers (reactive viz, MilkDrop PCM, duck FFT).
+  **Never construct a Visualizer outside the hub.**
   via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
 - **Networking**: OkHttp + kotlinx.serialization, app-level `AppContainer` in

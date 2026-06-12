@@ -502,14 +502,15 @@ private fun ProgramPane(
         // Live classifier readout while DUCK is on — the tuning surface for
         // the talk/music heuristic (see TalkMusicClassifier).
         if (duckEnabled) {
-            val line = if (duckStatus.active) {
-                "duck: %s · score %.2f%s".format(
-                    duckStatus.state.name.lowercase(),
-                    duckStatus.score,
-                    if (duckStatus.state == DuckState.TALK) " · volume ducked" else "",
-                )
-            } else {
-                "duck: waiting for playback"
+            val line = when {
+                duckStatus.active ->
+                    "duck: %s · score %.2f%s".format(
+                        duckStatus.state.name.lowercase(),
+                        duckStatus.score,
+                        if (duckStatus.state == DuckState.TALK) " · volume ducked" else "",
+                    )
+                duckStatus.note != null -> "duck: ${duckStatus.note}"
+                else -> "duck: waiting for playback"
             }
             Text(
                 text = line,

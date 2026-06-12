@@ -15,6 +15,8 @@ data class DuckStatus(
     val active: Boolean = false,
     val state: DuckState = DuckState.MUSIC,
     val score: Float = 0f,
+    /** Human-readable reason when the feature can't run (shown in the UI). */
+    val note: String? = null,
 )
 
 /**

@@ -2,7 +2,6 @@ package io.rg2.radio.viz
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.media.audiofx.Visualizer
 import android.opengl.GLSurfaceView
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -33,6 +32,8 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import io.rg2.radio.RadioApp
+import io.rg2.radio.audio.AudioTapHub
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -78,36 +79,20 @@ fun MilkdropVisualizer(sessionId: Int, modifier: Modifier = Modifier) {
     val view = remember(presets) { MilkdropGLView(context, presets) }
     view.onToggleFullscreen = { fullscreen = !fullscreen }
 
-    // PCM tap: waveform-only Visualizer on the player's audio session. The
-    // 8-bit mono waveform is coarse but plenty for beat/wave drivers.
+    // PCM feed via the shared audio tap (one Visualizer app-wide — see
+    // AudioTapHub). The 8-bit mono waveform is coarse but plenty for
+    // beat/wave drivers.
+    val tap = (context.applicationContext as RadioApp).container.audioTap
     DisposableEffect(view, sessionId) {
         if (sessionId <= 0) return@DisposableEffect onDispose {}
-        val tap = runCatching {
-            Visualizer(sessionId).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(1024)
-                setDataCaptureListener(
-                    object : Visualizer.OnDataCaptureListener {
-                        override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, rate: Int) {
-                            w ?: return
-                            val pcm = FloatArray(w.size) { ((w[it].toInt() and 0xFF) - 128) / 128f }
-                            view.feedPcm(pcm)
-                        }
-
-                        override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) = Unit
-                    },
-                    Visualizer.getMaxCaptureRate(),
-                    /* waveform = */ true,
-                    /* fft = */ false,
-                )
-                enabled = true
-            }
-        }.getOrNull()
-        onDispose {
-            tap?.let {
-                runCatching { it.enabled = false }
-                runCatching { it.release() }
+        val consumer = object : AudioTapHub.Consumer {
+            override fun onWaveform(w: ByteArray) {
+                val pcm = FloatArray(w.size) { ((w[it].toInt() and 0xFF) - 128) / 128f }
+                view.feedPcm(pcm)
             }
         }
+        tap.acquire(sessionId, consumer)
+        onDispose { tap.release(consumer) }
     }
 
     // Auto-advance presets with a soft blend, like the web visualizer.
