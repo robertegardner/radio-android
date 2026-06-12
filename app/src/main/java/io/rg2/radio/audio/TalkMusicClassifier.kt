@@ -32,9 +32,12 @@ data class DuckStatus(
  *  - **envelope steadiness**: coefficient of variation of the speech-band
  *    envelope. Syllabic gating makes speech bursty; mastered music is steady.
  *
- * An asymmetric hysteresis state machine sits on top: switching to TALK takes
- * ~5 s of sustained low score (song outros mustn't duck), switching back to
- * MUSIC takes ~1.5 s (resumption should feel prompt).
+ * Asymmetric hysteresis sits on top: switching to TALK takes ~8 s of
+ * sustained low score over the LONG (8 s) window — quiet, sparse song verses
+ * (field report: "Janie's Got a Gun") must not duck. Switching back to MUSIC
+ * uses a SHORT (3 s) window so recovery isn't dragged down by stale talk
+ * frames in the history (field report: ~30 s late un-duck) — music resumes
+ * the volume in roughly shortWindow + hold ≈ 4 s worst case.
  *
  * Known blind spot, by design: commercials with full music beds classify as
  * music. The signals to fix that (Whisper captions mode, track-ID state) live
@@ -45,7 +48,6 @@ class TalkMusicClassifier(private val onStatus: (DuckState, Float) -> Unit) {
     private val bass = FloatArray(CAPACITY)
     private val mid = FloatArray(CAPACITY)
     private val high = FloatArray(CAPACITY)
-    private val total = FloatArray(CAPACITY)
     private var count = 0
     private var head = 0 // next write position
 
@@ -95,7 +97,6 @@ class TalkMusicClassifier(private val onStatus: (DuckState, Float) -> Unit) {
         bass[head] = b
         mid[head] = m
         high[head] = h
-        total[head] = b + m + h
         head = (head + 1) % CAPACITY
         if (count < CAPACITY) count++
 
@@ -105,29 +106,31 @@ class TalkMusicClassifier(private val onStatus: (DuckState, Float) -> Unit) {
         }
     }
 
-    private fun evaluate(nowMs: Long) {
-        val n = count
-        // Reconstruct oldest→newest views for the windowed features.
+    /** Music-likelihood over the most recent [windowFrames] frames. */
+    private fun scoreWindow(windowFrames: Int): Float {
+        val n = min(count, windowFrames)
         val start = (head - n + CAPACITY) % CAPACITY
-        fun at(buf: FloatArray, i: Int) = buf[(start + i) % CAPACITY]
+        fun atBass(i: Int) = bass[(start + i) % CAPACITY]
+        fun atMid(i: Int) = mid[(start + i) % CAPACITY]
+        fun atHigh(i: Int) = high[(start + i) % CAPACITY]
 
         // -- Feature 1: bass-envelope beat periodicity ------------------------
         var meanBass = 0f
-        for (i in 0 until n) meanBass += at(bass, i)
+        for (i in 0 until n) meanBass += atBass(i)
         meanBass /= n
         var r0 = 1e-6f
         for (i in 0 until n) {
-            val x = at(bass, i) - meanBass
+            val x = atBass(i) - meanBass
             r0 += x * x
         }
-        val minLag = max(1, (250f / framePeriodMs).toInt())   // 0.25 s
+        val minLag = max(1, (250f / framePeriodMs).toInt())     // 0.25 s
         val maxLag = min(n - 8, (800f / framePeriodMs).toInt()) // 0.8 s
         var beat = 0f
         var lag = minLag
         while (lag <= maxLag) {
             var r = 0f
             for (i in 0 until n - lag) {
-                r += (at(bass, i) - meanBass) * (at(bass, i + lag) - meanBass)
+                r += (atBass(i) - meanBass) * (atBass(i + lag) - meanBass)
             }
             beat = max(beat, r / r0)
             lag++
@@ -137,39 +140,46 @@ class TalkMusicClassifier(private val onStatus: (DuckState, Float) -> Unit) {
         // -- Feature 2: sustained high-frequency content ----------------------
         var hfRatio = 0f
         for (i in 0 until n) {
-            val t = at(total, i)
-            if (t > 1f) hfRatio += at(high, i) / t
+            val t = atBass(i) + atMid(i) + atHigh(i)
+            if (t > 1f) hfRatio += atHigh(i) / t
         }
         hfRatio /= n
         val hfScore = (hfRatio / HF_FULL_SCALE).coerceIn(0f, 1f)
 
         // -- Feature 3: speech-band envelope steadiness -----------------------
         var meanMid = 0f
-        for (i in 0 until n) meanMid += at(mid, i)
+        for (i in 0 until n) meanMid += atMid(i)
         meanMid /= n
         var varMid = 0f
         for (i in 0 until n) {
-            val d = at(mid, i) - meanMid
+            val d = atMid(i) - meanMid
             varMid += d * d
         }
         val cv = if (meanMid > 1f) sqrt(varMid / n) / meanMid else 1f
         val steady = (1f - cv / CV_FULL_SCALE).coerceIn(0f, 1f)
 
-        val score = (W_BEAT * beat + W_HF * hfScore + W_STEADY * steady).coerceIn(0f, 1f)
+        return (W_BEAT * beat + W_HF * hfScore + W_STEADY * steady).coerceIn(0f, 1f)
+    }
 
-        // -- Hysteresis: slow to duck, prompt to resume -----------------------
+    private fun evaluate(nowMs: Long) {
+        // Long window decides ducking; short (recent) window decides recovery,
+        // so music-resume isn't dragged down by stale talk frames.
+        val longScore = scoreWindow(CAPACITY)
+        val shortScore = if (state == DuckState.TALK) scoreWindow(SHORT_FRAMES) else longScore
+
         val dt = if (lastEvalAtMs == 0L) 0L else (nowMs - lastEvalAtMs).coerceIn(0, 2_000)
         lastEvalAtMs = nowMs
-        musicRunMs = if (score >= MUSIC_THRESHOLD) musicRunMs + dt else 0L
-        talkRunMs = if (score <= TALK_THRESHOLD) talkRunMs + dt else 0L
+        musicRunMs = if (shortScore >= MUSIC_THRESHOLD) musicRunMs + dt else 0L
+        talkRunMs = if (longScore <= TALK_THRESHOLD) talkRunMs + dt else 0L
         if (state == DuckState.TALK && musicRunMs >= MUSIC_HOLD_MS) state = DuckState.MUSIC
         if (state == DuckState.MUSIC && talkRunMs >= TALK_HOLD_MS) state = DuckState.TALK
 
-        onStatus(state, score)
+        onStatus(state, longScore)
     }
 
     private companion object {
-        const val CAPACITY = 256          // ~12 s of frames at 20 Hz
+        const val CAPACITY = 160          // ~8 s of frames at 20 Hz (duck decision)
+        const val SHORT_FRAMES = 60       // ~3 s (recovery decision)
         const val MIN_FRAMES = 80         // ~4 s before the first verdict
         const val EVAL_EVERY_FRAMES = 8   // re-score ~2.5×/s
 
@@ -182,8 +192,8 @@ class TalkMusicClassifier(private val onStatus: (DuckState, Float) -> Unit) {
         const val CV_FULL_SCALE = 0.60f   // envelope CV at which "bursty = speech" saturates
 
         const val MUSIC_THRESHOLD = 0.55f
-        const val TALK_THRESHOLD = 0.42f
-        const val MUSIC_HOLD_MS = 1_500L  // prompt resumption
-        const val TALK_HOLD_MS = 5_000L   // don't duck song outros
+        const val TALK_THRESHOLD = 0.35f  // low: quiet sparse verses must not duck
+        const val MUSIC_HOLD_MS = 1_500L  // prompt resumption (on the short window)
+        const val TALK_HOLD_MS = 8_000L   // don't duck song outros/bridges
     }
 }
