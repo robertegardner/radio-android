@@ -1,6 +1,8 @@
 package io.rg2.radio.ui
 
 import android.content.ComponentName
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +58,8 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import io.rg2.radio.BuildConfig
 import io.rg2.radio.RadioApp
+import io.rg2.radio.audio.DuckState
+import io.rg2.radio.audio.DuckStatus
 import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
@@ -84,8 +88,10 @@ fun NowPlayingRoute(
     val artworkUrl by viewModel.artworkUrl.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
-    val audioSessionId by (context.applicationContext as RadioApp)
-        .container.audioSession.collectAsStateWithLifecycle()
+    val container = (context.applicationContext as RadioApp).container
+    val audioSessionId by container.audioSession.collectAsStateWithLifecycle()
+    val duckEnabled by container.duckEnabled.collectAsStateWithLifecycle()
+    val duckStatus by container.duckStatus.collectAsStateWithLifecycle()
 
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
@@ -120,6 +126,9 @@ fun NowPlayingRoute(
         vizStyle = vizStyle,
         onVizStyleChange = { vizStyleName = it.name },
         audioSessionId = audioSessionId,
+        duckEnabled = duckEnabled,
+        duckStatus = duckStatus,
+        onToggleDuck = { container.setDuckEnabled(it) },
         onPlayPause = {
             val c = controller ?: return@NowPlayingScreen
             when {
@@ -158,6 +167,9 @@ private fun NowPlayingScreen(
     vizStyle: VizStyle,
     onVizStyleChange: (VizStyle) -> Unit,
     audioSessionId: Int,
+    duckEnabled: Boolean,
+    duckStatus: DuckStatus,
+    onToggleDuck: (Boolean) -> Unit,
     onPlayPause: () -> Unit,
     onSelectFavorite: (Favorite) -> Unit,
     modifier: Modifier = Modifier,
@@ -182,6 +194,9 @@ private fun NowPlayingScreen(
             onVizStyleChange = onVizStyleChange,
             isPlaying = isPlaying,
             audioSessionId = audioSessionId,
+            duckEnabled = duckEnabled,
+            duckStatus = duckStatus,
+            onToggleDuck = onToggleDuck,
         )
         TransportButton(
             isPlaying = isPlaying,
@@ -467,15 +482,42 @@ private fun ProgramPane(
     onVizStyleChange: (VizStyle) -> Unit,
     isPlaying: Boolean,
     audioSessionId: Int,
+    duckEnabled: Boolean,
+    duckStatus: DuckStatus,
+    onToggleDuck: (Boolean) -> Unit,
 ) {
     val caption = np?.caption?.text?.takeIf { np.mode == "captions" && it.isNotBlank() }
     val showCaption = captionsOn && caption != null
 
     InfoCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             SectionLabel(if (showCaption) "LIVE CAPTIONS" else "VISUALIZER")
             Spacer(Modifier.weight(1f))
+            DuckToggle(duckEnabled, duckStatus, onToggleDuck)
             CaptionToggle(captionsOn, onToggleCaptions)
+        }
+        // Live classifier readout while DUCK is on — the tuning surface for
+        // the talk/music heuristic (see TalkMusicClassifier).
+        if (duckEnabled) {
+            val line = when {
+                duckStatus.active ->
+                    "duck: %s · score %.2f%s".format(
+                        duckStatus.state.name.lowercase(),
+                        duckStatus.score,
+                        if (duckStatus.state == DuckState.TALK) " · volume ducked" else "",
+                    )
+                duckStatus.note != null -> "duck: ${duckStatus.note}"
+                else -> "duck: waiting for playback"
+            }
+            Text(
+                text = line,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+            )
         }
         if (showCaption) {
             Text(
@@ -492,6 +534,45 @@ private fun ProgramPane(
                 audioSessionId = audioSessionId,
             )
         }
+    }
+}
+
+/**
+ * "Duck on talk" option chip: OFF (outline) → ON (amber). While the classifier
+ * is actively ducking it reads DUCKED. Enabling requests RECORD_AUDIO if
+ * needed (the audio tap is the same mechanism as the reactive visualizers).
+ */
+@Composable
+private fun DuckToggle(on: Boolean, status: DuckStatus, onChange: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) onChange(true) }
+
+    val ducked = on && status.active && status.state == DuckState.TALK
+    val bg = if (on) Amber else MaterialTheme.colorScheme.surface
+    val fg = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, if (on) Amber else MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable {
+                when {
+                    on -> onChange(false)
+                    hasRecordPermission(context) -> onChange(true)
+                    else -> permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
+            }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = if (ducked) "DUCKED" else "DUCK",
+            color = fg,
+            fontSize = 12.sp,
+            letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

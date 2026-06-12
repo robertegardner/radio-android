@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import io.rg2.radio.RadioApp
+import io.rg2.radio.audio.DuckController
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
 import io.rg2.radio.data.NowPlaying
@@ -50,6 +51,7 @@ class PlaybackService : MediaLibraryService() {
 
     private lateinit var player: ExoPlayer
     private lateinit var session: MediaLibrarySession
+    private lateinit var duck: DuckController
 
     // Shared with the rest of the app via the application container, so tuning
     // here and polling in the UI use one RadioApi / settings / repository source.
@@ -84,6 +86,10 @@ class PlaybackService : MediaLibraryService() {
         player.addListener(MetadataUpdater())
         container.audioSessionId.value = player.audioSessionId
 
+        // "Duck on talk": near-mutes the stream during talk/commercials when
+        // the option is on. Service-scoped so it works with the screen off.
+        duck = DuckController(player, container, scope)
+
         // Session drives the live-stream wrapper so pause/resume (from the UI,
         // lock-screen, or notification) rejoin the live edge instead of
         // replaying buffered audio. Internal control (reconnect, metadata pump)
@@ -95,6 +101,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
 
     override fun onDestroy() {
+        duck.release()
         session.release()
         player.release()
         scope.cancel()

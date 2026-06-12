@@ -3,7 +3,6 @@ package io.rg2.radio.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.audiofx.Visualizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
@@ -48,6 +47,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import io.rg2.radio.RadioApp
+import io.rg2.radio.audio.AudioTapHub
 import io.rg2.radio.ui.theme.Amber
 import io.rg2.radio.viz.MilkdropVisualizer
 import io.rg2.radio.viz.ProjectMNative
@@ -191,51 +192,31 @@ fun ReactiveVisualizer(style: VizStyle, sessionId: Int, color: Color, modifier: 
     var phase by remember { mutableStateOf(0f) }
     var failed by remember { mutableStateOf(false) }
 
+    val tap = (LocalContext.current.applicationContext as RadioApp).container.audioTap
     DisposableEffect(sessionId) {
         if (sessionId <= 0) return@DisposableEffect onDispose {}
         val smoothed = FloatArray(BAR_COUNT)
         val peakHold = FloatArray(BAR_COUNT)
-        val visualizer = runCatching {
-            Visualizer(sessionId).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[1].coerceAtMost(1024)
-                setDataCaptureListener(
-                    object : Visualizer.OnDataCaptureListener {
-                        override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, rate: Int) {
-                            w ?: return
-                            waveform = FloatArray(w.size) { ((w[it].toInt() and 0xFF) - 128) / 128f }
-                        }
-
-                        override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
-                            fft ?: return
-                            val next = fftToBars(fft)
-                            for (i in next.indices) {
-                                smoothed[i] = smoothed[i] * 0.5f + next[i] * 0.5f
-                                // Peak caps fall slowly under gravity so they
-                                // float visibly above the bars on every dip.
-                                peakHold[i] = maxOf(peakHold[i] - 0.010f, smoothed[i])
-                            }
-                            bars = smoothed.copyOf()
-                            peaks = peakHold.copyOf()
-                            phase += 0.05f // drives FRACTAL rotation (~capture rate)
-                        }
-                    },
-                    Visualizer.getMaxCaptureRate(),
-                    /* waveform = */ true,
-                    /* fft = */ true,
-                )
-                enabled = true
+        val consumer = object : AudioTapHub.Consumer {
+            override fun onWaveform(w: ByteArray) {
+                waveform = FloatArray(w.size) { ((w[it].toInt() and 0xFF) - 128) / 128f }
             }
-        }.getOrElse {
-            failed = true
-            null
-        }
 
-        onDispose {
-            visualizer?.let {
-                runCatching { it.enabled = false }
-                runCatching { it.release() }
+            override fun onFft(fft: ByteArray) {
+                val next = fftToBars(fft)
+                for (i in next.indices) {
+                    smoothed[i] = smoothed[i] * 0.5f + next[i] * 0.5f
+                    // Peak caps fall slowly under gravity so they
+                    // float visibly above the bars on every dip.
+                    peakHold[i] = maxOf(peakHold[i] - 0.010f, smoothed[i])
+                }
+                bars = smoothed.copyOf()
+                peaks = peakHold.copyOf()
+                phase += 0.05f // drives FRACTAL rotation (~capture rate)
             }
         }
+        failed = !tap.acquire(sessionId, consumer)
+        onDispose { tap.release(consumer) }
     }
 
     Box(modifier, contentAlignment = Alignment.Center) {
@@ -391,7 +372,7 @@ private fun fftToBars(fft: ByteArray): FloatArray {
     return out
 }
 
-private fun hasRecordPermission(context: Context): Boolean =
+internal fun hasRecordPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
         PackageManager.PERMISSION_GRANTED
 

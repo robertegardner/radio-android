@@ -1,6 +1,10 @@
 package io.rg2.radio
 
 import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
+import io.rg2.radio.audio.AudioTapHub
+import io.rg2.radio.audio.DuckStatus
 import io.rg2.radio.data.ArtworkRepository
 import io.rg2.radio.data.InMemoryRadioSettings
 import io.rg2.radio.data.NowPlayingRepository
@@ -23,7 +27,7 @@ class RadioApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer()
+        container = AppContainer(getSharedPreferences("radio", Context.MODE_PRIVATE))
     }
 }
 
@@ -33,7 +37,7 @@ class RadioApp : Application() {
  * lands. Everything reads settings through the `{ settings }` lambda so that
  * swap won't require rebuilding [api].
  */
-class AppContainer {
+class AppContainer(private val prefs: SharedPreferences) {
     @Volatile
     var settings: RadioSettings = InMemoryRadioSettings()
 
@@ -58,4 +62,30 @@ class AppContainer {
      */
     val audioSessionId: MutableStateFlow<Int> = MutableStateFlow(0)
     val audioSession: StateFlow<Int> get() = audioSessionId
+
+    /**
+     * The single shared Visualizer tap on that session — viz styles and the
+     * duck classifier all consume through here (a second Visualizer instance
+     * on one session fails on real devices; never construct one directly).
+     */
+    val audioTap: AudioTapHub = AudioTapHub()
+
+    /**
+     * "Duck on talk" option: near-mute the stream during talk/commercial
+     * stretches, prompt volume restore when music returns. Persisted; consumed
+     * by DuckController in PlaybackService. [duckStatus] is the live state +
+     * classifier score it publishes back for the UI readout.
+     */
+    val duckEnabled: MutableStateFlow<Boolean> =
+        MutableStateFlow(prefs.getBoolean(PREF_DUCK_ENABLED, false))
+    val duckStatus: MutableStateFlow<DuckStatus> = MutableStateFlow(DuckStatus())
+
+    fun setDuckEnabled(on: Boolean) {
+        duckEnabled.value = on
+        prefs.edit().putBoolean(PREF_DUCK_ENABLED, on).apply()
+    }
+
+    private companion object {
+        const val PREF_DUCK_ENABLED = "duck_talk_enabled"
+    }
 }
