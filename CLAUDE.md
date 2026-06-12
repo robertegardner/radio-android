@@ -36,10 +36,15 @@ device-verified. Implemented:
 - **UI** (amber-LCD `ui/theme`): tuner panel with **album art** behind it, a
   **Track ID tile** (artist/title/album + a source badge RDS/CHROMAPRINT/LYRIC
   MATCH + a raw RDS readout), a captions toggle, and audio **visualizers**
-  (BARS/PEAKS/MIRROR/SCOPE/FRACTAL/SYNTH; reactive ones use the real FFT via
-  `RECORD_AUDIO`). The backend's *web* UI separately gained a Butterchurn
-  (MilkDrop-style) visualizer on 2026-06-12 — web-page-only, never visible in
-  this app; details and porting options in `docs/web-visualizer.md`.
+  (BARS/PEAKS/MIRROR/SCOPE/FRACTAL/**MILKDROP**/SYNTH; reactive ones use the
+  real FFT/waveform via `RECORD_AUDIO`). MILKDROP (added 2026-06-12) is a
+  native **libprojectM** port — GLES3 `GLSurfaceView` + JNI, bundled classic
+  presets, tap pane = next preset, 30 s auto-advance; chip hides itself
+  without GLES3 or the native lib. See `docs/web-visualizer.md` (history: the
+  backend web UI's Butterchurn equivalent) and "Native build (MILKDROP)"
+  below. Device-verified 2026-06-12 (sideload; note an old installed build
+  signed with a different debug key silently blocked the update — uninstall
+  first when the version label under the header doesn't change).
 - **Build/version**: `v<ver> · <git sha>` (with `-dirty`) shown under the header
   via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
@@ -178,6 +183,30 @@ adb logcat --pid=$(adb shell pidof io.rg2.radio)   # app logs
   the test environment" model as the Pi. Verify on a device before committing.
 - Pre-approve `gradle`/`adb`/`git` in `.claude/settings.json` to cut down on
   approval prompts (same pattern as the radio repo on the Pi).
+
+### Native build (MILKDROP / libprojectM)
+
+The MILKDROP visualizer adds an NDK build to `:app` (the only native code in
+the repo; `:wear` is untouched).
+
+- **Fresh checkout needs** `git submodule update --init --recursive` —
+  libprojectM v4.1.6 lives at `third_party/projectm` (with its own
+  `vendor/projectm-eval` submodule), statically linked into
+  `libprojectm-jni.so` for `arm64-v8a` (phones) + `x86_64` (the Chromebook
+  Android runtime / emulator).
+- **Toolchain:** NDK `27.2.12479018` + CMake `3.22.1` (pinned in
+  `app/build.gradle.kts`; install via sdkmanager — note Google's CDN flaked
+  on first install, `wget -c` of the NDK zip into `~/Android/Sdk/ndk/` works).
+- **Two gotchas baked into `app/src/main/cpp/CMakeLists.txt`, don't undo:**
+  our top-level `project()` must carry `VERSION` = the submodule's version
+  (projectM's `version.h.in` reads `CMAKE_PROJECT_VERSION_*`, the TOP-LEVEL
+  project's — empty version = compile error in `ProjectMCWrapper.cpp`), and
+  the JNI target needs `DEBUG_POSTFIX ""` (projectM caches a global `d`
+  postfix that would rename the lib out from under `System.loadLibrary`).
+- `ENABLE_GLES` must NOT be set manually — projectM force-enables it when
+  `CMAKE_SYSTEM_NAME` is Android.
+- Runtime gating: `ProjectMNative.available` (lib loaded) + `supportsGles3()`
+  hide the MILKDROP chip wherever it can't run.
 
 ## Conventions (match the radio/scanner repos)
 

@@ -28,22 +28,26 @@ not and cannot appear in the app. The app's own visualizers
   this app's native player (Media3 doesn't do CORS), but anyone touching the
   NPMplus icecast host config must preserve it.
 
-## If MilkDrop-style visuals are ever wanted in the app
+## MilkDrop in the app — DONE (2026-06-12): native projectM port
 
-Two realistic routes, neither trivial:
+Route 1 below was implemented the same day as this note. The app now has a
+**MILKDROP** style in the visualizer chip row, rendered by **libprojectM
+v4.1.6** (git submodule at `third_party/projectm`, statically linked into
+`libprojectm-jni.so`) on a GLES3 `GLSurfaceView`, fed mono PCM by the same
+`android.media.audiofx.Visualizer` session tap the other reactive styles use.
+Same UX as the web one: random preset on start, 30 s auto-advance with a
+2.7 s blend, tap the pane for the next preset. 16 classic shader-less
+presets (Geiss/Rovastar/Unchained/…) ship in `assets/milkdrop/` and are
+extracted to `filesDir` on first use. The chip hides itself when GLES3 or
+the native lib is unavailable (`supportsGles3` + `ProjectMNative.available`).
 
-1. **projectM** (`projectM-android` / libprojectM, the native MilkDrop
-   implementation) rendering to a `GLSurfaceView`, fed PCM/FFT the same way
-   `Visualizers.kt` is fed today (`android.media.audiofx.Visualizer` on the
-   Media3 audio session — already permission-gated by `RECORD_AUDIO`).
-   Native library + NDK build; the presets are the same MilkDrop `.milk`
-   ecosystem Butterchurn uses.
-2. **WebView wrapping `/radio`** — cheap but wrong for this app: it would
-   double-play audio (page `<audio>` + Media3) unless the page grew a
-   "viz-only, no audio" mode, and it gives up the native player. Not
-   recommended given the Android-Auto/background-playback rationale for going
-   native in the first place.
+Key files: `app/src/main/cpp/{CMakeLists.txt,projectm_jni.cpp}`,
+`app/src/main/java/io/rg2/radio/viz/{ProjectMNative,MilkdropVisualizer}.kt`.
+Build gotchas are recorded in CLAUDE.md ("Native build (MILKDROP)").
 
-Until one of those is a real priority, the answer to "why doesn't the app show
-the MilkDrop visuals?" is simply: they live in the web page, and the app
-doesn't use the web page.
+The rejected alternative, kept for the record:
+
+- **WebView wrapping `/radio`** — cheap but wrong for this app: it would
+  double-play audio (page `<audio>` + Media3) unless the page grew a
+  "viz-only, no audio" mode, and it gives up the native player and the
+  Android-Auto/background-playback rationale for going native.

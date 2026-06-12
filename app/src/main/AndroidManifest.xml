@@ -18,6 +18,12 @@
     <!-- Runtime permission on API 33+ for the media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- MILKDROP visualizer renders via libprojectM on OpenGL ES 3. Not
+         required: the style hides itself at runtime if GLES3 is missing. -->
+    <uses-feature
+        android:glEsVersion="0x00030000"
+        android:required="false" />
+
     <application
         android:name=".RadioApp"
         android:allowBackup="true"
