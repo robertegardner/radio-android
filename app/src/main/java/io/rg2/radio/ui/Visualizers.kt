@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import io.rg2.radio.ui.theme.Amber
+import io.rg2.radio.viz.MilkdropVisualizer
+import io.rg2.radio.viz.ProjectMNative
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
@@ -71,6 +73,7 @@ enum class VizStyle(val label: String, val reactive: Boolean) {
     MIRROR("MIRROR", true),
     SCOPE("SCOPE", true),
     FRACTAL("FRACTAL", true),
+    MILKDROP("MILKDROP", true),
     SYNTHETIC("SYNTH", false),
 }
 
@@ -89,6 +92,7 @@ fun VisualizerPane(
 ) {
     val context = LocalContext.current
     var hasMic by remember { mutableStateOf(hasRecordPermission(context)) }
+    val hasMilkdrop = remember { supportsGles3(context) && ProjectMNative.available }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -107,10 +111,14 @@ fun VisualizerPane(
         contentAlignment = Alignment.Center,
     ) {
         val canvasMod = Modifier.fillMaxWidth().height(VISUALIZER_HEIGHT)
-        if (style.reactive && hasMic) {
-            ReactiveVisualizer(style, audioSessionId, Amber, canvasMod)
-        } else {
-            SyntheticVisualizer(isPlaying, Amber, canvasMod)
+        when {
+            // MilkDrop (libprojectM, GLES3) — tap the pane for the next preset.
+            style == VizStyle.MILKDROP && hasMic && hasMilkdrop ->
+                MilkdropVisualizer(audioSessionId, canvasMod)
+            style.reactive && hasMic ->
+                ReactiveVisualizer(style, audioSessionId, Amber, canvasMod)
+            else ->
+                SyntheticVisualizer(isPlaying, Amber, canvasMod)
         }
     }
 
@@ -121,9 +129,11 @@ fun VisualizerPane(
             .padding(top = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        VizStyle.entries.forEach { s ->
-            VizModeChip(s.label, active = s == style) { onStyleChange(s) }
-        }
+        VizStyle.entries
+            .filter { it != VizStyle.MILKDROP || hasMilkdrop }
+            .forEach { s ->
+                VizModeChip(s.label, active = s == style) { onStyleChange(s) }
+            }
     }
 }
 
@@ -384,3 +394,9 @@ private fun fftToBars(fft: ByteArray): FloatArray {
 private fun hasRecordPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
         PackageManager.PERMISSION_GRANTED
+
+/** MILKDROP needs OpenGL ES 3.0 (libprojectM's floor on mobile). */
+private fun supportsGles3(context: Context): Boolean {
+    val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+    return (am?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= 0x30000
+}

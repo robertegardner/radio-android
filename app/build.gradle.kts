@@ -24,6 +24,7 @@ fun gitRevision(): String {
 android {
     namespace = "io.rg2.radio"
     compileSdk = 36
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "io.rg2.radio"
@@ -32,6 +33,23 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "GIT_SHA", "\"${gitRevision()}\"")
+
+        // libprojectM (MILKDROP visualizer). arm64 covers every real device;
+        // x86_64 keeps the emulator working. ProjectMNative.available guards
+        // any ABI without the lib.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        externalNativeBuild {
+            cmake {
+                arguments("-DANDROID_STL=c++_static")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
