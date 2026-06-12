@@ -1,23 +1,38 @@
 package io.rg2.radio.viz
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.audiofx.Visualizer
 import android.opengl.GLSurfaceView
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ViewGroup
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -34,13 +49,17 @@ private const val PRESET_ASSET_DIR = "milkdrop"
  * MilkDrop-style visualizer: libprojectM rendering into a [GLSurfaceView],
  * fed mono PCM from the same `Visualizer` audio-session tap the other
  * reactive styles use. Counterpart of the backend web UI's Butterchurn
- * visualizer (see docs/web-visualizer.md) — same UX: random preset on start,
- * 30 s auto-advance with a soft blend, tap for the next preset immediately.
+ * visualizer (see docs/web-visualizer.md), with the same gestures:
+ * **single tap = toggle fullscreen, double-tap = next preset**, plus a 30 s
+ * auto-advance with a soft blend. Fullscreen reuses the same GL view inside
+ * an immersive dialog (back or tap exits); the surface is recreated on
+ * reparenting, so the current preset restarts — visually a quick fade-in.
  */
 @Composable
 fun MilkdropVisualizer(sessionId: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var presets by remember { mutableStateOf<List<String>>(emptyList()) }
+    var fullscreen by remember { mutableStateOf(false) }
 
     // One-time asset extraction (projectM reads presets from real file paths).
     LaunchedEffect(Unit) { presets = extractPresets(context) }
@@ -57,6 +76,7 @@ fun MilkdropVisualizer(sessionId: Int, modifier: Modifier = Modifier) {
     }
 
     val view = remember(presets) { MilkdropGLView(context, presets) }
+    view.onToggleFullscreen = { fullscreen = !fullscreen }
 
     // PCM tap: waveform-only Visualizer on the player's audio session. The
     // 8-bit mono waveform is coarse but plenty for beat/wave drivers.
@@ -106,10 +126,56 @@ fun MilkdropVisualizer(sessionId: Int, modifier: Modifier = Modifier) {
         }
     }
 
-    androidx.compose.ui.viewinterop.AndroidView(
-        factory = { view.apply { setOnClickListener { nextPreset(smooth = false) } } },
-        modifier = modifier.fillMaxSize(),
+    if (fullscreen) {
+        // The inline slot goes black while the GL view lives in the dialog.
+        Box(modifier.background(Color.Black))
+        Dialog(
+            onDismissRequest = { fullscreen = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            HideSystemBars()
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                ReparentingGLView(view, Modifier.fillMaxSize())
+            }
+        }
+    } else {
+        ReparentingGLView(view, modifier.fillMaxSize())
+    }
+}
+
+/**
+ * Hosts [view], pulling it out of any previous parent first — the same
+ * GLSurfaceView instance moves between the inline pane and the fullscreen
+ * dialog rather than rebuilding the projectM instance from scratch.
+ */
+@Composable
+private fun ReparentingGLView(view: MilkdropGLView, modifier: Modifier) {
+    AndroidView(
+        factory = {
+            (view.parent as? ViewGroup)?.removeView(view)
+            view
+        },
+        modifier = modifier,
     )
+}
+
+/** Immersive mode for the fullscreen dialog (status + nav bars hidden). */
+@Composable
+private fun HideSystemBars() {
+    val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+    SideEffect {
+        dialogWindow?.let { w ->
+            WindowCompat.setDecorFitsSystemWindows(w, false)
+            WindowInsetsControllerCompat(w, w.decorView).apply {
+                hide(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
+    }
 }
 
 /** Copy bundled presets out of assets so projectM can read them as files. */
@@ -132,16 +198,42 @@ private suspend fun extractPresets(context: Context): List<String> =
 /**
  * GLES3 surface driving projectM. All projectM calls are funneled to the GL
  * thread (renderer callbacks / queueEvent) — the native side is not
- * thread-safe.
+ * thread-safe. Gestures: single tap → [onToggleFullscreen], double-tap →
+ * next preset.
  */
+@SuppressLint("ViewConstructor", "ClickableViewAccessibility")
 private class MilkdropGLView(context: Context, presets: List<String>) : GLSurfaceView(context) {
     private val renderer = MilkdropRenderer(presets)
+
+    var onToggleFullscreen: (() -> Unit)? = null
+
+    private val gestures = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                onToggleFullscreen?.invoke()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                nextPreset(smooth = false)
+                return true
+            }
+        },
+    )
 
     init {
         setEGLContextClientVersion(3)
         preserveEGLContextOnPause = true
         setRenderer(renderer)
         renderMode = RENDERMODE_CONTINUOUSLY
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        gestures.onTouchEvent(event)
+        return true
     }
 
     fun feedPcm(samples: FloatArray) = renderer.feedPcm(samples)
