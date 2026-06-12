@@ -45,7 +45,21 @@ device-verified. Implemented:
   below. Device-verified 2026-06-12 (sideload; note an old installed build
   signed with a different debug key silently blocked the update — uninstall
   first when the version label under the header doesn't change).
-- **Build/version**: `v<ver> · <git sha>` (with `-dirty`) shown under the header
+- **Duck on talk** (2026-06-12, opt-in DUCK chip in the program pane):
+  near-mutes the stream (7%) during commercials/DJ talk, prompt ~250 ms
+  restore when music returns. Pure client-side heuristic —
+  `audio/TalkMusicClassifier` (bass-beat autocorrelation + HF sustain +
+  envelope steadiness over the Visualizer FFT tap, asymmetric hysteresis:
+  ~5 s to duck, ~1.5 s to resume) driven by `audio/DuckController` inside
+  PlaybackService (works screen-off; radio items only, never scanner). A live
+  `state · score` readout shows under the chip while enabled — that's the
+  tuning surface; weights/thresholds are named constants in the classifier.
+  Known blind spot: commercials with full music beds read as music — the fix
+  is fusing `/api/now_playing` hints (captions mode = talk, track-ID = music)
+  later. Needs RECORD_AUDIO (same grant as the reactive viz). NOTE: this adds
+  a second concurrent Visualizer instance when a reactive viz style is shown —
+  worked-as-designed needs device confirmation; if a device refuses two taps
+  on one session, refactor to a shared single-Visualizer hub.
   via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
 - **Networking**: OkHttp + kotlinx.serialization, app-level `AppContainer` in

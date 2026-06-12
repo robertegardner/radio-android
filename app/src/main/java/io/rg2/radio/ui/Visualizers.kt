@@ -391,7 +391,7 @@ private fun fftToBars(fft: ByteArray): FloatArray {
     return out
 }
 
-private fun hasRecordPermission(context: Context): Boolean =
+internal fun hasRecordPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
         PackageManager.PERMISSION_GRANTED
 
