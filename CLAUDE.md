@@ -37,7 +37,9 @@ device-verified. Implemented:
   **Track ID tile** (artist/title/album + a source badge RDS/CHROMAPRINT/LYRIC
   MATCH + a raw RDS readout), a captions toggle, and audio **visualizers**
   (BARS/PEAKS/MIRROR/SCOPE/FRACTAL/SYNTH; reactive ones use the real FFT via
-  `RECORD_AUDIO`).
+  `RECORD_AUDIO`). The backend's *web* UI separately gained a Butterchurn
+  (MilkDrop-style) visualizer on 2026-06-12 — web-page-only, never visible in
+  this app; details and porting options in `docs/web-visualizer.md`.
 - **Build/version**: `v<ver> · <git sha>` (with `-dirty`) shown under the header
   via `BuildConfig.GIT_SHA` (config-cache-safe `providers.exec` in
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
