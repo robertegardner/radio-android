@@ -23,7 +23,14 @@ box before committing** (backend convention). See the `backend-access` memory.
 baseball**, a lot of it listened to in the car. That single fact is why this is
 a native app and not a web wrapper — see below.
 
-## Current state (2026-06-03)
+## Current state (2026-06-12)
+
+> 2026-06-12 wave (all merged to main, device-verified except where noted):
+> MILKDROP visualizer (native projectM), tap-to-fullscreen on its pane,
+> duck-on-talk + AudioTapHub. **Pending sideload:** duck tuning v2
+> (740ddf5) — the installed build still has v1 thresholds. The backend
+> grew server-side counterparts the same day: /fm-duck.mp3 (ducked relay
+> for the WiiM) + ICY StreamTitle metadata — see the platform repo.
 
 The greenfield scaffold is long done; the app is substantially built and
 device-verified. Implemented:
@@ -49,8 +56,9 @@ device-verified. Implemented:
   near-mutes the stream (7%) during commercials/DJ talk, prompt ~250 ms
   restore when music returns. Pure client-side heuristic —
   `audio/TalkMusicClassifier` (bass-beat autocorrelation + HF sustain +
-  envelope steadiness over the Visualizer FFT tap, asymmetric hysteresis:
-  ~5 s to duck, ~1.5 s to resume) driven by `audio/DuckController` inside
+  envelope steadiness over the shared AudioTapHub FFT feed; v2 tuning:
+  ~8 s to duck so sparse verses don't trigger, recovery scored on a 3 s
+  short window so music restores in ~4 s) driven by `audio/DuckController` inside
   PlaybackService (works screen-off; radio items only, never scanner). A live
   `state · score` readout shows under the chip while enabled — that's the
   tuning surface; weights/thresholds are named constants in the classifier.
