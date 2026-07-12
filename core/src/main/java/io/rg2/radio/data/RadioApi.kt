@@ -50,23 +50,40 @@ class RadioApi(
      * (200 `{ok:true}`) and the backend's validation failures (400
      * `{ok:false,error:...}`); only transport/other errors throw.
      */
-    suspend fun tune(request: TuneRequest): TuneResponse {
+    suspend fun tune(request: TuneRequest): TuneResponse =
+        postJson("/api/tune", json.encodeToString(TuneRequest.serializer(), request))
+
+    /** Toggle FM stereo vs mono decode. Restarts the stream. */
+    suspend fun setStereo(on: Boolean): TuneResponse =
+        postJson("/api/stereo", json.encodeToString(StereoRequest.serializer(), StereoRequest(on)))
+
+    /** Select the antenna port (a value from [Antennas.ALL]). Restarts the stream. */
+    suspend fun setAntenna(antenna: String): TuneResponse =
+        postJson("/api/antenna", json.encodeToString(AntennaRequest.serializer(), AntennaRequest(antenna)))
+
+    /** Set the stream MP3 bitrate (e.g. "128k", "256k"). Restarts the stream. */
+    suspend fun setBitrate(bitrate: String): TuneResponse =
+        postJson("/api/bitrate", json.encodeToString(BitrateRequest.serializer(), BitrateRequest(bitrate)))
+
+    /**
+     * Shared write-endpoint POST. All four write endpoints speak the same
+     * `{ok, error}` envelope for 200 and validation-failure 400; anything else
+     * throws. Attaches the Authorization header when settings supply one.
+     */
+    private suspend fun postJson(path: String, bodyJson: String): TuneResponse {
         val s = settings()
-        val body = json.encodeToString(TuneRequest.serializer(), request)
-            .toRequestBody(JSON_MEDIA_TYPE)
         val builder = Request.Builder()
-            .url(s.baseUrl.trimEnd('/') + "/api/tune")
-            .post(body)
+            .url(s.baseUrl.trimEnd('/') + path)
+            .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
         s.authHeader?.let { builder.header("Authorization", it) }
 
         val resp = client.newCall(builder.build()).await()
         resp.use {
             val text = it.body?.string().orEmpty()
-            // 200 and 400 both carry a TuneResponse JSON body; anything else is unexpected.
             if (it.isSuccessful || it.code == 400) {
                 return decode(text, TuneResponse.serializer())
             }
-            throw RadioApiException("tune failed: HTTP ${it.code} ${it.message}")
+            throw RadioApiException("POST $path failed: HTTP ${it.code} ${it.message}")
         }
     }
 

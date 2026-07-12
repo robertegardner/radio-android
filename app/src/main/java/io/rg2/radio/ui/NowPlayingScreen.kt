@@ -3,6 +3,8 @@ package io.rg2.radio.ui
 import android.content.ComponentName
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -60,18 +62,25 @@ import io.rg2.radio.BuildConfig
 import io.rg2.radio.RadioApp
 import io.rg2.radio.audio.DuckState
 import io.rg2.radio.audio.DuckStatus
+import io.rg2.radio.audio.StereoLevels
+import io.rg2.radio.data.Antennas
 import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
 import io.rg2.radio.data.NowPlaying
+import io.rg2.radio.data.Station
+import io.rg2.radio.data.Stations
+import io.rg2.radio.data.toFavorite
 import io.rg2.radio.data.trackArtist
 import io.rg2.radio.data.trackTitle
 import io.rg2.radio.playback.PlaybackService
 import io.rg2.radio.ui.theme.Amber
+import io.rg2.radio.ui.theme.AmberDim
 import io.rg2.radio.ui.theme.RadioSurface
 import io.rg2.radio.ui.theme.SignalBad
 import io.rg2.radio.ui.theme.SignalGood
 import io.rg2.radio.ui.theme.SignalWarn
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
 
 // ---------------------------------------------------------------------------
@@ -86,6 +95,8 @@ fun NowPlayingRoute(
     val controller = rememberMediaController()
     val nowPlaying by viewModel.nowPlaying.collectAsStateWithLifecycle()
     val artworkUrl by viewModel.artworkUrl.collectAsStateWithLifecycle()
+    val stations by viewModel.stations.collectAsStateWithLifecycle()
+    val bitrate by viewModel.bitrate.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val container = (context.applicationContext as RadioApp).container
@@ -95,6 +106,7 @@ fun NowPlayingRoute(
 
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
+    var isRadioSource by remember { mutableStateOf(true) }
     var captionsOn by rememberSaveable { mutableStateOf(true) }
     var vizStyleName by rememberSaveable { mutableStateOf(VizStyle.BARS.name) }
     val vizStyle = VizStyle.valueOf(vizStyleName)
@@ -104,11 +116,16 @@ fun NowPlayingRoute(
         fun sync() {
             isPlaying = c.isPlaying
             isBuffering = c.playbackState == Player.STATE_BUFFERING
+            // The one shared player also plays scanner streams; the tuner
+            // panel's L/R meters must not animate to scanner audio.
+            isRadioSource =
+                c.currentMediaItem?.mediaId?.startsWith(PlaybackService.SCANNER_PREFIX) != true
         }
         sync()
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) = sync()
             override fun onPlaybackStateChanged(state: Int) = sync()
+            override fun onMediaItemTransition(item: MediaItem?, reason: Int) = sync()
         }
         c.addListener(listener)
         onDispose { c.removeListener(listener) }
@@ -121,6 +138,10 @@ fun NowPlayingRoute(
         isBuffering = isBuffering,
         enabled = controller != null,
         artworkUrl = artworkUrl,
+        stations = stations,
+        bitrate = bitrate,
+        stereoLevels = container.stereoLevels,
+        metersActive = isPlaying && isRadioSource,
         captionsOn = captionsOn,
         onToggleCaptions = { captionsOn = it },
         vizStyle = vizStyle,
@@ -129,6 +150,9 @@ fun NowPlayingRoute(
         duckEnabled = duckEnabled,
         duckStatus = duckStatus,
         onToggleDuck = { container.setDuckEnabled(it) },
+        onSetStereo = viewModel::setStereo,
+        onSetAntenna = viewModel::setAntenna,
+        onSetBitrate = viewModel::setBitrate,
         onPlayPause = {
             val c = controller ?: return@NowPlayingScreen
             when {
@@ -162,6 +186,10 @@ private fun NowPlayingScreen(
     isBuffering: Boolean,
     enabled: Boolean,
     artworkUrl: String?,
+    stations: Polled<Stations>,
+    bitrate: String?,
+    stereoLevels: StateFlow<StereoLevels>,
+    metersActive: Boolean,
     captionsOn: Boolean,
     onToggleCaptions: (Boolean) -> Unit,
     vizStyle: VizStyle,
@@ -170,6 +198,9 @@ private fun NowPlayingScreen(
     duckEnabled: Boolean,
     duckStatus: DuckStatus,
     onToggleDuck: (Boolean) -> Unit,
+    onSetStereo: (Boolean) -> Unit,
+    onSetAntenna: (String) -> Unit,
+    onSetBitrate: (String) -> Unit,
     onPlayPause: () -> Unit,
     onSelectFavorite: (Favorite) -> Unit,
     modifier: Modifier = Modifier,
@@ -184,7 +215,14 @@ private fun NowPlayingScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         StatusHeader(state)
-        TunerDisplay(np, artworkUrl)
+        TunerDisplay(np, artworkUrl, stereoLevels, metersActive)
+        RfControls(
+            np = np,
+            bitrate = bitrate,
+            onSetStereo = onSetStereo,
+            onSetAntenna = onSetAntenna,
+            onSetBitrate = onSetBitrate,
+        )
         TrackIdTile(np)
         ProgramPane(
             np = np,
@@ -207,6 +245,12 @@ private fun NowPlayingScreen(
         )
         PresetsSection(
             activeFavorite = np.activeFavorite(),
+            enabled = enabled,
+            onSelect = onSelectFavorite,
+        )
+        StationsSection(
+            stations = stations,
+            np = np,
             enabled = enabled,
             onSelect = onSelectFavorite,
         )
@@ -248,7 +292,12 @@ private fun StatusHeader(state: Polled<NowPlaying>) {
 }
 
 @Composable
-private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
+private fun TunerDisplay(
+    np: NowPlaying?,
+    artworkUrl: String?,
+    levelsFlow: StateFlow<StereoLevels>,
+    metersActive: Boolean,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -279,7 +328,13 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
             }
 
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                BandChip(np?.band)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BandChip(np?.band)
+                    Spacer(Modifier.weight(1f))
+                    // The backend gates `pilot` on FM + stereo mode + a fresh
+                    // 19 kHz lock, so it alone means "really receiving stereo".
+                    StereoLed(lit = np?.pilot == true)
+                }
 
                 val unit = when (np?.band) {
                     Band.AM -> "kHz"
@@ -322,7 +377,83 @@ private fun TunerDisplay(np: NowPlaying?, artworkUrl: String?) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.height(4.dp))
+                LevelMeters(levelsFlow, metersActive)
             }
+        }
+    }
+}
+
+/** Classic tuner STEREO lamp: lit only on a true FM pilot lock. */
+@Composable
+private fun StereoLed(lit: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .then(
+                    if (lit) Modifier.background(Amber)
+                    else Modifier.border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                ),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "STEREO",
+            color = if (lit) Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
+            letterSpacing = 2.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * L/R channel level meters fed by the player's PCM tap ([StereoLevels]) —
+ * genuinely independent needles when the stream is stereo, identical on mono.
+ * Collects the ~40 Hz level flow HERE so only the two bars recompose per
+ * audio buffer, not the whole screen. [active] is false when paused or when
+ * the shared player is on a scanner stream — meters rest at zero.
+ */
+@Composable
+private fun LevelMeters(levelsFlow: StateFlow<StereoLevels>, active: Boolean) {
+    val levels by levelsFlow.collectAsStateWithLifecycle()
+    val shown = if (active) levels else StereoLevels()
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        MeterBar("L", shown.left)
+        MeterBar("R", shown.right)
+    }
+}
+
+@Composable
+private fun MeterBar(label: String, level: Float) {
+    val animated by animateFloatAsState(
+        targetValue = level.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 70),
+        label = "meter$label",
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(14.dp),
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(animated)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Brush.horizontalGradient(listOf(AmberDim, Amber))),
+            )
         }
     }
 }
@@ -465,6 +596,87 @@ private fun BandChip(band: Band?) {
             .padding(horizontal = 10.dp, vertical = 3.dp),
     ) {
         Text(text = text, color = Amber, fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * RF settings mirrored from the backend web UI: antenna port, FM stereo/mono,
+ * and stream bitrate. Every change restarts the stream server-side (a ~2 s
+ * drop the reconnect logic rides out); current state comes from the polls, so
+ * the chips light up when the backend confirms.
+ */
+@Composable
+private fun RfControls(
+    np: NowPlaying?,
+    bitrate: String?,
+    onSetStereo: (Boolean) -> Unit,
+    onSetAntenna: (String) -> Unit,
+    onSetBitrate: (String) -> Unit,
+) {
+    InfoCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("RF")
+            Spacer(Modifier.weight(1f))
+            np?.antenna?.let {
+                Text(
+                    text = it.uppercase(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Antennas.ALL.forEach { antenna ->
+                OptionChip(
+                    text = Antennas.shortLabel(antenna),
+                    selected = np?.antenna == antenna,
+                    // The HF+ is a separate AM-only device; FM always runs on the dx-R2.
+                    enabled = np != null && (antenna != Antennas.HF_PLUS || np.band == Band.AM),
+                    onClick = { onSetAntenna(antenna) },
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val fm = np?.band == Band.FM
+            OptionChip("ST", selected = np?.stereo == true, enabled = fm) { onSetStereo(true) }
+            OptionChip("MONO", selected = np?.stereo == false, enabled = fm) { onSetStereo(false) }
+            Spacer(Modifier.weight(1f))
+            OptionChip("128K", selected = bitrate == "128k", enabled = np != null) { onSetBitrate("128k") }
+            OptionChip("256K", selected = bitrate == "256k", enabled = np != null) { onSetBitrate("256k") }
+        }
+    }
+}
+
+/** Small amber option chip: filled when selected, outlined otherwise. */
+@Composable
+private fun OptionChip(
+    text: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val bg = if (selected) Amber else MaterialTheme.colorScheme.surface
+    val fg = when {
+        !enabled -> MaterialTheme.colorScheme.outline
+        selected -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, if (selected) Amber else MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled && !selected) { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = text,
+            color = fg,
+            fontSize = 12.sp,
+            letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -711,6 +923,161 @@ private fun PresetCard(
             )
         }
     }
+}
+
+/**
+ * Browsable scanned-station list (collapsed by default — it can run long).
+ * Rows show call/city, scan SNR, and the best antenna from the multi-antenna
+ * sweep; tapping tunes through the same favorite/mediaId path as presets, so
+ * the service auto-selects that antenna on the way in.
+ */
+@Composable
+private fun StationsSection(
+    stations: Polled<Stations>,
+    np: NowPlaying?,
+    enabled: Boolean,
+    onSelect: (Favorite) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val s = stations.data
+    val count = (s?.fm?.size ?: 0) + (s?.am?.size ?: 0)
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+        ) {
+            SectionLabel("STATIONS")
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (count > 0) "$count scanned" else "no scan data",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (expanded) "HIDE" else "SHOW",
+                color = Amber,
+                fontSize = 11.sp,
+                letterSpacing = 2.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        if (expanded && s != null) {
+            StationBandList("FM", s.fm, np, enabled, onSelect)
+            StationBandList("AM", s.am, np, enabled, onSelect)
+        }
+    }
+}
+
+@Composable
+private fun StationBandList(
+    header: String,
+    list: List<Station>,
+    np: NowPlaying?,
+    enabled: Boolean,
+    onSelect: (Favorite) -> Unit,
+) {
+    if (list.isEmpty()) return
+    Text(
+        text = header,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 11.sp,
+        letterSpacing = 2.sp,
+        fontWeight = FontWeight.Bold,
+    )
+    list.forEach { station ->
+        StationRow(
+            station = station,
+            active = np.isTunedTo(station),
+            enabled = enabled,
+            onClick = { onSelect(station.toFavorite()) },
+        )
+    }
+}
+
+@Composable
+private fun StationRow(
+    station: Station,
+    active: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val fav = station.toFavorite()
+    val borderMod = if (active) Modifier.border(1.5.dp, Amber, RoundedCornerShape(12.dp)) else Modifier
+    Card(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().then(borderMod),
+        colors = CardDefaults.cardColors(
+            containerColor = if (active) MaterialTheme.colorScheme.surfaceVariant
+            else MaterialTheme.colorScheme.surface,
+        ),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = Favorite.formatFreq(station.band, station.tuneFreq),
+                color = if (active) Amber else MaterialTheme.colorScheme.onSurface,
+                fontSize = 16.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(64.dp),
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = station.call ?: fav.label,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (fav.sublabel.isNotBlank()) {
+                    Text(
+                        text = fav.sublabel,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                station.snrDb?.let {
+                    Text(
+                        text = "%.0f dB".format(it),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+                station.antenna?.let {
+                    Text(
+                        text = Antennas.shortLabel(it),
+                        color = Amber,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Whether [station] matches the currently-tuned band/freq. */
+private fun NowPlaying?.isTunedTo(station: Station): Boolean {
+    val np = this ?: return false
+    val f = np.freq?.toDoubleOrNull() ?: return false
+    if (np.band != station.band) return false
+    val epsilon = if (station.band == Band.AM) 0.5 else 0.05
+    return abs(station.tuneFreq - f) < epsilon
 }
 
 // ---------------------------------------------------------------------------
