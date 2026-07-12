@@ -41,6 +41,16 @@ data class NowPlaying(
     @SerialName("hd_probing") val hdProbing: Boolean = false,
     @SerialName("hd_unavailable") val hdUnavailable: Boolean = false,
 
+    /** FM stereo decode is *selected* (the mono/stereo toggle), not signal state. */
+    val stereo: Boolean = false,
+    /** True 19 kHz pilot lock — the backend gates this on FM + stereo mode + a fresh pilot. */
+    val pilot: Boolean = false,
+    @SerialName("pilot_rms") val pilotRms: Double? = null,
+    /** 0..1 mono→stereo blend the decoder is currently applying. */
+    @SerialName("pilot_blend") val pilotBlend: Double? = null,
+    /** Active antenna port — one of [Antennas.ALL] (e.g. "Antenna A", "HF+"). */
+    val antenna: String? = null,
+
     val fcc: Fcc? = null,
     val rds: Rds? = null,
     val caption: Caption? = null,
@@ -139,6 +149,10 @@ data class Station(
     val label: String? = null,
     @SerialName("power_db") val powerDb: Double? = null,
     @SerialName("snr_db") val snrDb: Double? = null,
+    /** Best antenna from the multi-antenna scan sweep (e.g. "Antenna B", "HF+"). */
+    val antenna: String? = null,
+    /** SNR in dB per antenna key ("A"/"B"/"C"/"HF+") from that sweep. */
+    @SerialName("by_antenna") val byAntenna: Map<String, Double> = emptyMap(),
 ) {
     /** Inferred band: AM if a kHz freq is present, otherwise FM. */
     val band: Band get() = if (freqKhz != null) Band.AM else Band.FM
@@ -154,6 +168,9 @@ data class Station(
 /**
  * Tune request body. Key is `band` (not `mode`). `hd`/`subchannel` are always
  * false/0 on this backend but sent to match the web UI's exact payload.
+ * [stereo]/[antenna] are optional per-tune audio settings the backend applies
+ * in the same stream restart; null keys are omitted from the JSON, which the
+ * backend reads as "leave the current setting alone".
  */
 @Serializable
 data class TuneRequest(
@@ -161,13 +178,45 @@ data class TuneRequest(
     val band: Band,
     val hd: Boolean = false,
     val subchannel: Int = 0,
+    val stereo: Boolean? = null,
+    val antenna: String? = null,
 )
 
+/** Response shape shared by /api/tune, /api/stereo, /api/antenna, /api/bitrate. */
 @Serializable
 data class TuneResponse(
     val ok: Boolean = false,
     val error: String? = null,
 )
+
+// ---------------------------------------------------------------------------
+// POST /api/stereo · /api/antenna · /api/bitrate
+//   Each persists the setting and restarts the stream (client-side that looks
+//   like a tune: a brief drop the reconnect logic already rides out).
+// ---------------------------------------------------------------------------
+
+@Serializable
+data class StereoRequest(val stereo: Boolean)
+
+@Serializable
+data class AntennaRequest(val antenna: String)
+
+@Serializable
+data class BitrateRequest(val bitrate: String)
+
+/**
+ * Antenna ports the backend accepts — the wire values are the display strings.
+ * A/B/C are the dx-R2's ports (A = the FM antenna, B = AM loop, C = long-wire);
+ * "HF+" is a separate AM-only device (Airspy HF+ on the YouLoop) — FM always
+ * runs on the dx-R2, so HF+ must not be offered while tuned to FM.
+ */
+object Antennas {
+    const val HF_PLUS = "HF+"
+    val ALL: List<String> = listOf("Antenna A", "Antenna B", "Antenna C", HF_PLUS)
+
+    /** Short chip label: "Antenna B" → "B", "HF+" → "HF+". */
+    fun shortLabel(antenna: String): String = antenna.removePrefix("Antenna ").trim()
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/status
@@ -179,6 +228,8 @@ data class Status(
     @SerialName("current_freq") val currentFreq: String? = null,
     @SerialName("current_hd") val currentHd: Boolean = false,
     @SerialName("current_subchannel") val currentSubchannel: Int = 0,
+    /** Stream MP3 bitrate, e.g. "256k". */
+    val bitrate: String? = null,
     /** e.g. "active". */
     val status: String? = null,
 )

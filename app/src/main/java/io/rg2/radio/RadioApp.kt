@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import io.rg2.radio.audio.AudioTapHub
 import io.rg2.radio.audio.DuckStatus
+import io.rg2.radio.audio.StereoLevels
 import io.rg2.radio.data.ArtworkRepository
 import io.rg2.radio.data.InMemoryRadioSettings
 import io.rg2.radio.data.NowPlayingRepository
@@ -69,6 +70,14 @@ class AppContainer(private val prefs: SharedPreferences) {
      * on one session fails on real devices; never construct one directly).
      */
     val audioTap: AudioTapHub = AudioTapHub()
+
+    /**
+     * Per-channel L/R levels from the player's own PCM tap (see
+     * [io.rg2.radio.audio.StereoLevelTap]) — published by PlaybackService,
+     * consumed by the tuner panel's L/R meters. Independent of the Visualizer
+     * hub and needs no RECORD_AUDIO.
+     */
+    val stereoLevels: MutableStateFlow<StereoLevels> = MutableStateFlow(StereoLevels())
 
     /**
      * "Duck on talk" option: near-mute the stream during talk/commercial

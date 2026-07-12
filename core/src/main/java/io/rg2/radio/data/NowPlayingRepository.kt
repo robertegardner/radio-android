@@ -25,6 +25,10 @@ class NowPlayingRepository(private val api: RadioApi) {
     fun stations(periodMs: Long = STATIONS_PERIOD_MS): Flow<Result<Stations>> =
         poll(periodMs) { api.stations() }
 
+    /** Lightweight tune/bitrate status — drives the bitrate chips. */
+    fun status(periodMs: Long = STATUS_PERIOD_MS): Flow<Result<Status>> =
+        poll(periodMs) { api.status() }
+
     private fun <T> poll(periodMs: Long, fetch: suspend () -> T): Flow<Result<T>> = flow {
         while (currentCoroutineContext().isActive) {
             emit(runCatching { fetch() })
@@ -35,5 +39,6 @@ class NowPlayingRepository(private val api: RadioApi) {
     companion object {
         const val NOW_PLAYING_PERIOD_MS = 1_000L
         const val STATIONS_PERIOD_MS = 30_000L
+        const val STATUS_PERIOD_MS = 10_000L
     }
 }

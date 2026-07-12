@@ -40,7 +40,13 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
             cmake {
-                arguments("-DANDROID_STL=c++_static")
+                arguments(
+                    "-DANDROID_STL=c++_static",
+                    // 16 KB page-size devices (Android 15+, e.g. Pixel 10):
+                    // NDK r27 needs this opt-in to link the .so with 16 KB ELF
+                    // alignment, else the OS warns the app isn't compatible.
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                )
             }
         }
     }

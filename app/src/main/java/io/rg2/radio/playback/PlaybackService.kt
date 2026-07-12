@@ -1,5 +1,6 @@
 package io.rg2.radio.playback
 
+import android.net.Uri
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -16,15 +17,25 @@ import androidx.media3.session.MediaSession
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import io.rg2.radio.RadioApp
 import io.rg2.radio.audio.DuckController
+import io.rg2.radio.audio.StereoLevelTap
+import io.rg2.radio.audio.TapRenderersFactory
+import io.rg2.radio.data.Band
 import io.rg2.radio.data.Favorite
 import io.rg2.radio.data.Favorites
 import io.rg2.radio.data.NowPlaying
 import io.rg2.radio.data.NowPlayingRepository
 import io.rg2.radio.data.RadioApi
 import io.rg2.radio.data.RadioSettings
+import io.rg2.radio.data.Station
+import io.rg2.radio.data.Stations
 import io.rg2.radio.data.TuneRequest
+import io.rg2.radio.data.coverArtUrl
+import io.rg2.radio.data.toFavorite
+import io.rg2.radio.data.trackArtist
+import io.rg2.radio.data.trackTitle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +43,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * The background playback engine. A [MediaLibraryService] gives us three things
@@ -70,7 +82,10 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
 
-        player = ExoPlayer.Builder(this)
+        // The renderers factory splices a TeeAudioProcessor into the audio
+        // pipeline so the L/R meters see the real decoded stereo PCM (the
+        // Visualizer hub only ever gets a mono downmix).
+        player = ExoPlayer.Builder(this, TapRenderersFactory(this, StereoLevelTap(container.stereoLevels)))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -96,6 +111,10 @@ class PlaybackService : MediaLibraryService() {
         // still operates on the underlying ExoPlayer; ForwardingPlayer relays
         // its events to the session.
         session = MediaLibrarySession.Builder(this, LiveStreamPlayer(player), LibraryCallback()).build()
+
+        // Warm the scanned-station cache so the first tune can auto-select an
+        // antenna without ever waiting on the network.
+        refreshStations()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
@@ -174,7 +193,7 @@ class PlaybackService : MediaLibraryService() {
             repo.nowPlaying().collect { result ->
                 val np = result.getOrNull() ?: return@collect
                 val current = player.currentMediaItem ?: return@collect
-                val updated = liveMetadata(np, current.mediaMetadata)
+                val updated = liveMetadata(np, current.mediaMetadata, resolveArtUrl(np))
                 if (updated != current.mediaMetadata) {
                     // Same URI/mediaId, metadata-only change → seamless, no re-buffer.
                     player.replaceMediaItem(
@@ -186,6 +205,19 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /**
+     * Cover-art URL for the session metadata: prefer art the backend already
+     * fetched, else the iTunes fallback (same priority as the UI's artwork
+     * flow). The repository caches by track — including misses — so calling
+     * this on every 1 s poll is a map hit, not a network call.
+     */
+    private suspend fun resolveArtUrl(np: NowPlaying): String? {
+        np.coverArtUrl()?.let { return it }
+        val artist = np.trackArtist() ?: return null
+        val title = np.trackTitle() ?: return null
+        return container.artworkRepository.artworkUrl(artist, title)
+    }
+
     private fun stopMetadataUpdates() {
         metadataJob?.cancel()
         metadataJob = null
@@ -195,14 +227,19 @@ class PlaybackService : MediaLibraryService() {
      * Merge live [np] over the current item's metadata (which carries the
      * favorite label/sublabel as fallback). Notification line 1 = song title or
      * station; line 2 = song artist, else RadioText, else the favorite sublabel.
+     *
+     * [artUrl] lands as the artworkUri: the session's bitmap loader fetches it
+     * and hands the bitmap to the platform session, which is what the
+     * notification, Android Auto, and Bluetooth AVRCP cover art (head units
+     * speaking AVRCP 1.6+) all display. Null clears the art for talk content.
      */
-    private fun liveMetadata(np: NowPlaying, base: MediaMetadata): MediaMetadata {
+    private fun liveMetadata(np: NowPlaying, base: MediaMetadata, artUrl: String?): MediaMetadata {
         val station = np.rds?.ps?.takeIf { it.isNotBlank() }
             ?: np.fcc?.call?.takeIf { it.isNotBlank() }
             ?: base.station?.toString()
             ?: base.title?.toString()
-        val songTitle = np.lyrics?.song?.title?.takeIf { it.isNotBlank() }
-        val songArtist = np.lyrics?.song?.artist?.takeIf { it.isNotBlank() }
+        val songTitle = np.trackTitle()
+        val songArtist = np.trackArtist()
 
         val line1 = songTitle ?: station
         val line2 = songArtist
@@ -213,6 +250,7 @@ class PlaybackService : MediaLibraryService() {
             .setTitle(line1)
             .setArtist(line2)
             .setStation(station)
+            .setArtworkUri(artUrl?.let(Uri::parse))
             .build()
     }
 
@@ -232,12 +270,34 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            if (parentId != Favorites.ROOT_ID) {
-                return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = when (parentId) {
+            Favorites.ROOT_ID -> {
+                val items = Favorites.SEED.map(::favoriteBrowseItem) + stationsFolderItem()
+                Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(items), params))
             }
-            val items = ImmutableList.copyOf(Favorites.SEED.map(::favoriteBrowseItem))
-            return Futures.immediateFuture(LibraryResult.ofItemList(items, params))
+            STATIONS_ID -> {
+                // Scanned stations come from the backend; resolve asynchronously.
+                val future = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
+                scope.launch {
+                    try {
+                        val s = stations()
+                        if (s == null) {
+                            // Backend unreachable and no cache: a real error,
+                            // not a deceptively-successful empty folder.
+                            future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO))
+                        } else {
+                            val items = (s.fm + s.am).map(::stationBrowseItem)
+                            future.set(LibraryResult.ofItemList(ImmutableList.copyOf(items), params))
+                        }
+                    } finally {
+                        // Service destroyed mid-fetch (scope cancelled): complete
+                        // anyway so the browser can't hang on a spinner forever.
+                        if (!future.isDone) future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN))
+                    }
+                }
+                future
+            }
+            else -> Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
         }
 
         override fun onGetItem(
@@ -245,7 +305,7 @@ class PlaybackService : MediaLibraryService() {
             browser: MediaSession.ControllerInfo,
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> {
-            val fav = Favorites.byMediaId(mediaId)
+            val fav = Favorite.fromMediaId(mediaId)
                 ?: return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
             return Futures.immediateFuture(LibraryResult.ofItem(favoriteBrowseItem(fav), null))
         }
@@ -285,15 +345,56 @@ class PlaybackService : MediaLibraryService() {
 
     /** Fire-and-forget tune; playback of the (unchanging) stream URL continues regardless. */
     private fun tune(fav: Favorite) {
+        // Antenna auto-select (mirrors the web UI): the scan's best antenna
+        // rides the tune body so freq + antenna land in ONE stream restart.
+        // Two deliberate limits: only the already-cached scan is consulted —
+        // the tune POST must never wait behind a stations fetch (in the car
+        // that could delay a preset tap by a network timeout) — and only when
+        // actually CHANGING station, so re-tapping the current one can't
+        // silently revert a manual antenna choice from the RF chips.
+        val antenna = if (isStationChange(fav)) bestCachedAntenna(fav) else null
+        lastTuned = fav
         scope.launch {
-            runCatching { api.tune(TuneRequest(freq = fav.freq, band = fav.band)) }
+            runCatching { api.tune(TuneRequest(freq = fav.freq, band = fav.band, antenna = antenna)) }
                 .onSuccess { resp ->
-                    if (resp.ok) Log.i(TAG, "tuned ${fav.label}")
+                    if (resp.ok) Log.i(TAG, "tuned ${fav.label}" + (antenna?.let { " on $it" } ?: ""))
                     else Log.w(TAG, "tune ${fav.label} rejected: ${resp.error}")
                 }
                 .onFailure { Log.w(TAG, "tune ${fav.label} failed", it) }
+            refreshStations() // keep the cache warm for the next tune / browse
         }
     }
+
+    private fun isStationChange(fav: Favorite): Boolean {
+        val last = lastTuned ?: return true
+        return last.band != fav.band || abs(last.freq - fav.freq) >= freqEpsilon(fav.band)
+    }
+
+    /**
+     * The scanned best antenna for [fav]'s frequency from the cached scan, or
+     * null (key omitted → backend keeps the current antenna) when unknown.
+     */
+    private fun bestCachedAntenna(fav: Favorite): String? {
+        val s = stationsCache ?: return null
+        val list = if (fav.band == Band.AM) s.am else s.fm
+        return list.firstOrNull { abs(it.tuneFreq - fav.freq) < freqEpsilon(fav.band) }?.antenna
+    }
+
+    private fun freqEpsilon(band: Band): Double = if (band == Band.AM) 0.5 else 0.05
+
+    /** Refresh the scanned-station cache in the background (never awaited by tune). */
+    private fun refreshStations() {
+        scope.launch { runCatching { api.stations() }.onSuccess { stationsCache = it } }
+    }
+
+    /** Fetch the scanned station list, falling back to the last good copy. */
+    private suspend fun stations(): Stations? =
+        runCatching { api.stations() }.getOrNull()?.also { stationsCache = it } ?: stationsCache
+
+    private var stationsCache: Stations? = null
+
+    /** The last tune this service issued — the "are we changing station?" reference. */
+    private var lastTuned: Favorite? = null
 
     private fun rootItem(): MediaItem =
         MediaItem.Builder()
@@ -308,12 +409,55 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    /** Browsable (no-URI) representation shown in the Android Auto tree. */
+    /**
+     * Playable-leaf (no-URI) representation shown in the Android Auto tree.
+     * Must be isPlayable=true / isBrowsable=false — a "browsable" preset
+     * renders as a folder on Auto and can never be tuned from there.
+     */
     private fun favoriteBrowseItem(fav: Favorite): MediaItem =
         MediaItem.Builder()
             .setMediaId(fav.mediaId)
-            .setMediaMetadata(stationMetadata(fav, browsable = true))
+            .setMediaMetadata(stationMetadata(fav))
             .build()
+
+    /** The "Stations" folder under the root — all scanned FM + AM stations. */
+    private fun stationsFolderItem(): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(STATIONS_ID)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle("Stations")
+                    .setIsBrowsable(true)
+                    .setIsPlayable(false)
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_RADIO_STATIONS)
+                    .build(),
+            )
+            .build()
+
+    /**
+     * A scanned station in the Auto tree. Same mediaId scheme as favorites, so
+     * selection resolves through [Favorite.fromMediaId] → tune like a preset.
+     */
+    private fun stationBrowseItem(station: Station): MediaItem {
+        val fav = station.toFavorite()
+        val detail = listOfNotNull(
+            fav.sublabel.takeIf { it.isNotBlank() },
+            station.snrDb?.let { "%.0f dB".format(it) },
+        ).joinToString(" · ")
+        return MediaItem.Builder()
+            .setMediaId(fav.mediaId)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(fav.label)
+                    .setSubtitle(detail.takeIf { it.isNotBlank() })
+                    .setStation(fav.label)
+                    .setIsBrowsable(false)
+                    .setIsPlayable(true)
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+                    .build(),
+            )
+            .build()
+    }
 
     /**
      * Resolve a scanner item the controller sent. The playable URL rides in
@@ -351,16 +495,16 @@ class PlaybackService : MediaLibraryService() {
         MediaItem.Builder()
             .setMediaId(fav.mediaId)
             .setUri(RadioSettings.DEFAULT_STREAM_URL)
-            .setMediaMetadata(stationMetadata(fav, browsable = false))
+            .setMediaMetadata(stationMetadata(fav))
             .build()
 
-    private fun stationMetadata(fav: Favorite, browsable: Boolean): MediaMetadata =
+    private fun stationMetadata(fav: Favorite): MediaMetadata =
         MediaMetadata.Builder()
             .setTitle(fav.label)
             .setSubtitle(fav.sublabel)
             .setStation(fav.label)
-            .setIsBrowsable(browsable)
-            .setIsPlayable(!browsable)
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
             .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
             .build()
 
@@ -371,5 +515,8 @@ class PlaybackService : MediaLibraryService() {
 
         /** mediaId prefix for EMS/ATC scanner streams + recordings (see ui.ScannerScreen). */
         const val SCANNER_PREFIX = "scanner:"
+
+        /** Browse-tree id of the scanned-stations folder. */
+        const val STATIONS_ID = "stations"
     }
 }

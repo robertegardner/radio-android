@@ -23,14 +23,23 @@ box before committing** (backend convention). See the `backend-access` memory.
 baseball**, a lot of it listened to in the car. That single fact is why this is
 a native app and not a web wrapper — see below.
 
-## Current state (2026-06-12)
+## Current state (2026-07-12)
 
-> 2026-06-12 wave (all merged to main, device-verified except where noted):
+> 2026-07-12 wave (device-verified on the Pixel 10 Pro Fold):
+> catching the app up to the backend's June stereo era — STEREO LED +
+> real L/R meters (TeeAudioProcessor PCM tap, `audio/StereoLevelTap`),
+> RF controls (antenna A/B/C/HF+, ST/MONO, 128k/256k bitrate),
+> best-antenna auto-select on tune, scanned-station browser (in-app +
+> Auto tree "Stations" folder), and album art on the media session
+> (`artworkUri` → notification / Auto / Bluetooth AVRCP cover art where
+> the head unit speaks AVRCP 1.6+). Also supersedes the still-pending
+> duck-v2 sideload (740ddf5).
+>
+> 2026-06-12 wave (all merged to main, device-verified):
 > MILKDROP visualizer (native projectM), tap-to-fullscreen on its pane,
-> duck-on-talk + AudioTapHub. **Pending sideload:** duck tuning v2
-> (740ddf5) — the installed build still has v1 thresholds. The backend
-> grew server-side counterparts the same day: /fm-duck.mp3 (ducked relay
-> for the WiiM) + ICY StreamTitle metadata — see the platform repo.
+> duck-on-talk + AudioTapHub. The backend grew server-side counterparts
+> the same day: /fm-duck.mp3 (ducked relay for the WiiM) + ICY
+> StreamTitle metadata — see the platform repo.
 
 The greenfield scaffold is long done; the app is substantially built and
 device-verified. Implemented:
@@ -176,8 +185,12 @@ clarity matter more than premium FM** for the core goal.
   software, so HD is dead. `now_playing` may still expose `hd_*` flags, but
   they'll read unavailable. Handle the fields gracefully and **build no HD
   subchannel UI / selector.**
-- **FM is mono, ~128k.** No stereo today (backburnered upstream). Nothing for
-  the app to do here beyond not assuming stereo metadata.
+- ~~FM is mono~~ **FM stereo landed upstream 2026-06-14** (19 kHz pilot
+  detect + `stereo_decode.py`, bitrate configurable up to 256k). The app's
+  stereo surface: `now_playing.{stereo,pilot,pilot_rms,pilot_blend,antenna}`,
+  optional `stereo`/`antenna` keys on `/api/tune`, and standalone
+  `POST /api/stereo|antenna|bitrate` (each restarts the stream — the
+  reconnect logic rides it out). See `docs/api.md` (re-verified 2026-07-12).
 
 ## Nice-to-haves the API already exposes
 
