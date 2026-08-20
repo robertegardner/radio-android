@@ -1,0 +1,17 @@
+<layouts>
+    <!--
+      One layout, six labels, reused by every page of MainView (the page just
+      sets text/colour on them). Keeping a single small layout instead of one
+      per page is deliberate: fenix 6 widgets get 64 KB total.
+      Positions tuned for this resolution (fonts come from Ui.fonts(dc)); dark background first (MIP and
+      AMOLED both want true black behind amber/white text).
+    -->
+    <layout id="MainLayout">
+        <label id="hdr"    x="center" y="26"  justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_YELLOW" text=""/>
+        <label id="l1"     x="center" y="64"  justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_WHITE"  text=""/>
+        <label id="l2"     x="center" y="100" justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_WHITE"  text=""/>
+        <label id="l3"     x="center" y="130" justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_WHITE"  text=""/>
+        <label id="l4"     x="center" y="160" justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_LT_GRAY" text=""/>
+        <label id="status" x="center" y="206" justification="Graphics.TEXT_JUSTIFY_CENTER" color="Graphics.COLOR_LT_GRAY" text=""/>
+    </layout>
+</layouts>

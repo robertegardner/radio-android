@@ -1,0 +1,18 @@
+<strings>
+    <string id="AppName">RG2 Radio</string>
+
+    <!-- settings UI -->
+    <string id="SetRadioUrl">Radio server URL</string>
+    <string id="SetRadioUrlPrompt">Base URL of the FM/AM backend (https required on the watch)</string>
+    <string id="SetScannerUrl">Scanner server URL</string>
+    <string id="SetScannerUrlPrompt">Base URL of the EMS/ATC scanner backend</string>
+    <string id="SetAuthUser">Username (optional)</string>
+    <string id="SetAuthPass">Password (optional)</string>
+    <string id="SetAuthPrompt">HTTP Basic auth sent on tune/control requests only</string>
+    <string id="SetBgRefresh">Background refresh</string>
+    <string id="SetBgRefreshPrompt">Refresh the glance every 5 minutes</string>
+    <string id="SetPollSec">Poll interval (seconds, open widget)</string>
+    <string id="SetPollSecPrompt">How often the open widget polls now-playing (2-60)</string>
+    <string id="SetShowScanner">Show scanner pages</string>
+    <string id="SetShowScannerPrompt">MOSWIN + Aviation pages (hide if you only use the radio)</string>
+</strings>

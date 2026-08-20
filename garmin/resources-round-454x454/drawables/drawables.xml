@@ -1,0 +1,4 @@
+<drawables>
+    <!-- 60x60: Descent Mk3 launcher icon size. -->
+    <bitmap id="LauncherIcon" filename="launcher_icon.png"/>
+</drawables>

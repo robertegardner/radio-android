@@ -1,0 +1,22 @@
+project.manifest = manifest.xml
+
+# Strict type checking is the project default (equivalent to monkeyc -l 3;
+# -l 2 on the command line is also clean).
+project.typecheck = strict
+
+base.sourcePath = source
+base.resourcePath = resources
+
+# Per-resolution overrides (layout fonts/positions, launcher icon size).
+# Explicit per-product assignment so there's no guessing about qualifier
+# auto-discovery; the base folder always comes first so anything a
+# resolution folder doesn't override falls through.
+fenix6s.resourcePath        = $(base.resourcePath);resources-round-240x240
+fenix6spro.resourcePath     = $(base.resourcePath);resources-round-240x240
+descentmk2s.resourcePath    = $(base.resourcePath);resources-round-240x240
+fenix6.resourcePath         = $(base.resourcePath);resources-round-260x260
+fenix6pro.resourcePath      = $(base.resourcePath);resources-round-260x260
+fenix6xpro.resourcePath     = $(base.resourcePath);resources-round-280x280
+descentmk2.resourcePath     = $(base.resourcePath);resources-round-280x280
+descentmk343mm.resourcePath = $(base.resourcePath);resources-round-390x390
+descentmk351mm.resourcePath = $(base.resourcePath);resources-round-454x454

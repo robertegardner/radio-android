@@ -1,0 +1,23 @@
+<settings>
+    <setting propertyKey="@Properties.radioBaseUrl" title="@Strings.SetRadioUrl" prompt="@Strings.SetRadioUrlPrompt">
+        <settingConfig type="alphaNumeric" maxLength="120"/>
+    </setting>
+    <setting propertyKey="@Properties.scannerBaseUrl" title="@Strings.SetScannerUrl" prompt="@Strings.SetScannerUrlPrompt">
+        <settingConfig type="alphaNumeric" maxLength="120"/>
+    </setting>
+    <setting propertyKey="@Properties.authUser" title="@Strings.SetAuthUser" prompt="@Strings.SetAuthPrompt">
+        <settingConfig type="alphaNumeric" maxLength="64"/>
+    </setting>
+    <setting propertyKey="@Properties.authPass" title="@Strings.SetAuthPass" prompt="@Strings.SetAuthPrompt">
+        <settingConfig type="password" maxLength="64"/>
+    </setting>
+    <setting propertyKey="@Properties.bgRefresh" title="@Strings.SetBgRefresh" prompt="@Strings.SetBgRefreshPrompt">
+        <settingConfig type="boolean"/>
+    </setting>
+    <setting propertyKey="@Properties.pollSec" title="@Strings.SetPollSec" prompt="@Strings.SetPollSecPrompt">
+        <settingConfig type="numeric" min="2" max="60"/>
+    </setting>
+    <setting propertyKey="@Properties.showScanner" title="@Strings.SetShowScanner" prompt="@Strings.SetShowScannerPrompt">
+        <settingConfig type="boolean"/>
+    </setting>
+</settings>

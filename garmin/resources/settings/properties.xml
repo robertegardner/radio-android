@@ -1,0 +1,10 @@
+<properties>
+    <!-- Read at request time (Settings.mc), never cached across a settings change. -->
+    <property id="radioBaseUrl" type="string">https://radio.rg2.io</property>
+    <property id="scannerBaseUrl" type="string">https://ems.rg2.io</property>
+    <property id="authUser" type="string"></property>
+    <property id="authPass" type="string"></property>
+    <property id="bgRefresh" type="boolean">true</property>
+    <property id="pollSec" type="number">3</property>
+    <property id="showScanner" type="boolean">true</property>
+</properties>

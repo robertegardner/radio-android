@@ -1,0 +1,4 @@
+<drawables>
+    <!-- 40x40: the launcher icon size for every MIP target (fenix 6 family, Mk2). -->
+    <bitmap id="LauncherIcon" filename="launcher_icon.png"/>
+</drawables>

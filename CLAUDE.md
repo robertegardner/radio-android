@@ -84,6 +84,14 @@ device-verified. Implemented:
 - **Networking**: OkHttp + kotlinx.serialization, app-level `AppContainer` in
   `RadioApp` holding the shared client/settings/repositories.
 
+- **Garmin Connect IQ port** (2026-08-20, `garmin/`, Monkey C, **not yet
+  compiled** — needs the SDK Manager's device files, which require a Garmin
+  login): widget + glance + 5-min background refresh for fenix 6 family /
+  Descent Mk2 / Mk3. Remote control + now-playing only; CIQ can't stream
+  audio. Everything (API analysis, device constraints, build/sideload, test
+  plan) is in `garmin/PORT_NOTES.md`. Note: real watches refuse plain
+  `http://` (`-1001`), so it defaults to the TLS hostnames.
+
 **Not started:** the encrypted settings/credentials store + settings screen
 (currently `InMemoryRadioSettings`, default base URL, no auth).
 

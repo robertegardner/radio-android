@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!--
+  RG2 Radio - Connect IQ widget + glance.
+  Product IDs verified against the Connect IQ 9.2.0 SDK device reference:
+    fenix6 / fenix6s / fenix6pro / fenix6spro / fenix6xpro   (MIP, API 3.4)
+    descentmk2 (Mk2 AND Mk2i share this ID) / descentmk2s   (MIP, API 3.4)
+    descentmk343mm (Mk3 + Mk3i 43 mm, 390x390 AMOLED, API 5.1)
+    descentmk351mm (Mk3i 51 mm, 454x454 AMOLED, API 5.1)
+  minApiLevel 3.4.0 = the highest level every listed device supports.
+-->
+<iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
+    <iq:application id="a7c1d2e3-4f50-4b61-9c72-83d4e5f60718"
+                    type="widget"
+                    name="@Strings.AppName"
+                    entry="RadioApp"
+                    launcherIcon="@Drawables.LauncherIcon"
+                    minApiLevel="3.4.0">
+        <iq:products>
+            <iq:product id="fenix6"/>
+            <iq:product id="fenix6s"/>
+            <iq:product id="fenix6pro"/>
+            <iq:product id="fenix6spro"/>
+            <iq:product id="fenix6xpro"/>
+            <iq:product id="descentmk2"/>
+            <iq:product id="descentmk2s"/>
+            <iq:product id="descentmk343mm"/>
+            <iq:product id="descentmk351mm"/>
+        </iq:products>
+        <iq:permissions>
+            <iq:uses-permission id="Background"/>
+            <iq:uses-permission id="Communications"/>
+        </iq:permissions>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>
