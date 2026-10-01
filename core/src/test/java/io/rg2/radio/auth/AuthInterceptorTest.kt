@@ -104,4 +104,15 @@ class AuthInterceptorTest {
         }
         assertTrue(server.requestCount >= 1)
     }
+
+    @Test fun signInRequiredSurfacesThroughRadioApi() = runTest {
+        source.signedIn = false
+        server.enqueue(loginRedirect()); server.enqueue(MockResponse().setBody("<html/>"))
+        val api = RadioApi({ InMemoryRadioSettings(baseUrl = server.url("").toString().trimEnd('/')) }, client)
+        try {
+            api.status()
+            fail("expected SignInRequiredException")
+        } catch (e: SignInRequiredException) {
+        }
+    }
 }
