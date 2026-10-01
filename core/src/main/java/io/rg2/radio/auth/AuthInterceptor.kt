@@ -26,12 +26,17 @@ class AuthInterceptor(
         val first = chain.proceed(req.withBearer(token))
         if (!needsSignIn(first)) return first
         first.close()
-        if (token == null) throw SignInRequiredException()
+        if (token == null) throw signInFailure()
         source.invalidate(host)
-        val retry = chain.proceed(req.withBearer(source.tokenFor(host) ?: throw SignInRequiredException()))
-        if (needsSignIn(retry)) { retry.close(); throw SignInRequiredException() }
+        val retry = chain.proceed(req.withBearer(source.tokenFor(host) ?: throw signInFailure()))
+        if (needsSignIn(retry)) { retry.close(); throw signInFailure() }
         return retry
     }
+
+    /** Signed out -> the user must sign in; signed in but no usable token -> transient, let reconnect/backoff retry. */
+    private fun signInFailure(): IOException =
+        if (!source.isSignedIn()) SignInRequiredException()
+        else IOException("Couldn't renew sign-in — will retry")
 
     private fun Request.withBearer(token: String?) =
         if (token == null) this else newBuilder().header("Authorization", "Bearer $token").build()

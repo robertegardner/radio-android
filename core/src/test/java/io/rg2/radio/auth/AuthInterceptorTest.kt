@@ -13,6 +13,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -79,12 +80,18 @@ class AuthInterceptorTest {
         assertEquals(1, source.invalidated)
     }
 
-    @Test fun neverLoopsSecondRedirectThrowsSignInRequired() {
+    @Test fun neverLoopsSecondRedirectThrowsRetryable() {
         server.enqueue(loginRedirect()); server.enqueue(MockResponse().setBody("<html/>"))
         server.enqueue(loginRedirect()); server.enqueue(MockResponse().setBody("<html/>"))
-        try { get().close(); fail("expected SignInRequiredException") } catch (e: SignInRequiredException) { }
+        try { get().close(); fail("expected IOException") } catch (e: java.io.IOException) { assertFalse(e is SignInRequiredException) }
         assertEquals(1, source.invalidated)
         assertEquals(4, server.requestCount)
+    }
+
+    @Test fun signedInButNoTokenRedirectIsRetryableNotSignInRequired() {
+        source.tokens.clear()
+        server.enqueue(loginRedirect()); server.enqueue(MockResponse().setBody("<html/>"))
+        try { get().close(); fail("expected IOException") } catch (e: java.io.IOException) { assertFalse(e is SignInRequiredException) }
     }
 
     @Test fun signedOutRedirectThrowsSignInRequired() {
