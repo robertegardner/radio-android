@@ -86,7 +86,10 @@ class OAuthClient(private val config: AuthConfig, private val http: OkHttpClient
             http.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 if (resp.isSuccessful) {
-                    OAuthResult.Ok(parse(text))
+                    runCatching { parse(text) }.fold(
+                        onSuccess = { OAuthResult.Ok(it) },
+                        onFailure = { OAuthResult.Err("invalid_response") }
+                    )
                 } else {
                     val err = runCatching {
                         json.parseToJsonElement(text).jsonObject["error"]!!.jsonPrimitive.content

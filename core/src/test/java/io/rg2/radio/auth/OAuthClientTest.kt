@@ -81,4 +81,9 @@ class OAuthClientTest {
         assertEquals("/application/o/revoke/", req.path)
         assertTrue(req.body.readUtf8().contains("token=rt"))
     }
+
+    @Test fun successWithNonJsonBodyIsInvalidResponse() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<html>portal</html>"))
+        assertEquals(OAuthResult.Err("invalid_response"), client.refresh("rt"))
+    }
 }
