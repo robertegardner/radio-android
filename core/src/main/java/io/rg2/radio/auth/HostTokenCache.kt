@@ -19,14 +19,16 @@ class HostTokenCache(
     private val oauth: OAuthClient,
     private val now: () -> Long = System::currentTimeMillis,
 ) : HostTokenSource {
-    private val noAccess = mutableSetOf<String>()
+    private val noAccess = mutableMapOf<String, String>()
 
     override fun isSignedIn() = repo.status.value is AuthStatus.SignedIn
 
     @Synchronized
     override fun tokenFor(host: String): String? {
         val clientId = config.hostClientIds[host] ?: return null
-        if (!isSignedIn() || host in noAccess) return null
+        if (!isSignedIn()) return null
+        val currentUsername = (repo.status.value as? AuthStatus.SignedIn)?.username ?: return null
+        if (noAccess[host] == currentUsername) return null
         repo.hostToken(host)?.let { if (it.expiresAtMs - now() > MIN_LIFE_MS) return it.token }
         val login = repo.freshAccessToken() ?: return null
         val first = oauth.exchange(login, clientId)
@@ -39,7 +41,7 @@ class HostTokenCache(
                 repo.putHostToken(host, HostToken(result.value.accessToken, now() + result.value.expiresIn * 1000))
                 result.value.accessToken
             }
-            is OAuthResult.Err -> { if (result.error == "invalid_grant") noAccess += host; null }
+            is OAuthResult.Err -> { if (result.error == "invalid_grant") noAccess[host] = currentUsername; null }
             is OAuthResult.Network -> null
         }
     }

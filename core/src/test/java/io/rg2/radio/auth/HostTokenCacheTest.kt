@@ -19,8 +19,8 @@ class HostTokenCacheTest {
     private lateinit var repo: AuthRepository
     private lateinit var cache: HostTokenCache
 
-    private fun idToken() = "e30." + Base64.getUrlEncoder().withoutPadding()
-        .encodeToString("""{"preferred_username":"kid","groups":["family"]}""".toByteArray()) + ".s"
+    private fun idToken(username: String = "kid", groups: List<String> = listOf("family")) = "e30." + Base64.getUrlEncoder().withoutPadding()
+        .encodeToString("""{"preferred_username":"$username","groups":${groups.joinToString("\",\"", "[\"", "\"]")}}""".toByteArray()) + ".s"
 
     @Before fun setUp() {
         server.start()
@@ -102,5 +102,16 @@ class HostTokenCacheTest {
         done.await(5, TimeUnit.SECONDS)
         assertEquals(List(4) { "hostTok" }, results.toList())
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun noAccessResetsForADifferentUser() {
+        repo.completeLogin(TokenResponse("login", "rt", idToken("kid", listOf("family")), 3600))
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":"invalid_grant"}"""))
+        server.enqueue(MockResponse().setBody("""{"access_token":"login2","refresh_token":"rt2","expires_in":3600}"""))
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":"invalid_grant"}"""))
+        assertNull(cache.tokenFor("ems.rg2.io"))
+        repo.completeLogin(TokenResponse("login3", "rt3", idToken("admin", listOf("homelab-admin")), 3600))
+        server.enqueue(MockResponse().setBody("""{"access_token":"hostTok","expires_in":86400}"""))
+        assertEquals("hostTok", cache.tokenFor("ems.rg2.io"))
     }
 }
