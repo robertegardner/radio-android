@@ -11,17 +11,19 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** Thrown for transport failures and unexpected (non-handled) HTTP statuses. */
-class RadioApiException(message: String, cause: Throwable? = null) : IOException(message, cause)
+open class RadioApiException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
+const val ADMIN_MESSAGE = "Needs admin — your account can listen but not control"
+
+/** 403 `{"error":"admin required"}` from the platform write guard (off-LAN, not homelab-admin). */
+class AdminRequiredException : RadioApiException(ADMIN_MESSAGE)
 
 /**
  * The radio backend HTTP client. OkHttp + kotlinx.serialization (house style —
  * no Retrofit). All endpoints and their JSON shapes are documented in
  * `docs/api.md`; this class is the single place the app talks to the backend.
  *
- * Read endpoints ([nowPlaying], [stations], [status]) are public. The write
- * endpoint ([tune]) attaches an `Authorization` header when [RadioSettings]
- * supplies one — harmless today (auth isn't enforced yet) and correct once
- * NPMplus basic auth lands.
+ * Authentication is added transparently by `io.rg2.radio.auth.AuthInterceptor` on the shared client.
  *
  * [settings] is read on every call so live base-URL/credential changes from the
  * settings screen take effect without rebuilding the client.
@@ -68,18 +70,18 @@ class RadioApi(
     /**
      * Shared write-endpoint POST. All four write endpoints speak the same
      * `{ok, error}` envelope for 200 and validation-failure 400; anything else
-     * throws. Attaches the Authorization header when settings supply one.
+     * throws.
      */
     private suspend fun postJson(path: String, bodyJson: String): TuneResponse {
         val s = settings()
         val builder = Request.Builder()
             .url(s.baseUrl.trimEnd('/') + path)
             .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
-        s.authHeader?.let { builder.header("Authorization", it) }
 
         val resp = client.newCall(builder.build()).await()
         resp.use {
             val text = it.body?.string().orEmpty()
+            if (it.code == 403 && text.contains("admin required")) throw AdminRequiredException()
             if (it.isSuccessful || it.code == 400) {
                 return decode(text, TuneResponse.serializer())
             }
@@ -115,7 +117,8 @@ class RadioApi(
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+        fun defaultClient(interceptor: okhttp3.Interceptor? = null): OkHttpClient = OkHttpClient.Builder()
+            .apply { interceptor?.let { addInterceptor(it) } }
             .connectTimeout(10, TimeUnit.SECONDS)
             // now_playing/status are polled ~1s; keep read timeout tight so a
             // stalled poll fails fast rather than piling up.
