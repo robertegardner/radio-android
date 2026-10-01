@@ -117,7 +117,11 @@ class NowPlayingViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { block() }
                 .onSuccess { if (!it.ok) Log.w(TAG, "$what rejected: ${it.error}") }
-                .onFailure { Log.w(TAG, "$what failed", it) }
+                .onFailure {
+                    Log.w(TAG, "$what failed", it)
+                    if (it is io.rg2.radio.data.AdminRequiredException ||
+                        it is io.rg2.radio.auth.SignInRequiredException) container.actionMessage.value = it.message
+                }
         }
     }
 

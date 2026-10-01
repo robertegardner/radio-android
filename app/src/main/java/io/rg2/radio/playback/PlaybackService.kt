@@ -86,6 +86,11 @@ class PlaybackService : MediaLibraryService() {
         // pipeline so the L/R meters see the real decoded stereo PCM (the
         // Visualizer hub only ever gets a mono downmix).
         player = ExoPlayer.Builder(this, TapRenderersFactory(this, StereoLevelTap(container.stereoLevels)))
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(container.httpClient),
+                ),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -134,6 +139,11 @@ class PlaybackService : MediaLibraryService() {
      */
     private inner class ReconnectListener : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
+            if (generateSequence(error as Throwable?) { it.cause }.any { it is io.rg2.radio.auth.SignInRequiredException }) {
+                container.authHint.value = "Sign in (ACCOUNT tab) to listen away from home"
+                Log.i(TAG, "stream needs sign-in; not reconnecting")
+                return
+            }
             if (reconnectAttempts >= MAX_RECONNECTS) {
                 Log.w(TAG, "giving up reconnect after $reconnectAttempts attempts", error)
                 return
@@ -148,7 +158,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_READY) reconnectAttempts = 0
+            if (state == Player.STATE_READY) {
+                reconnectAttempts = 0
+                container.authHint.value = null
+            }
         }
     }
 
@@ -272,7 +285,8 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = when (parentId) {
             Favorites.ROOT_ID -> {
-                val items = Favorites.SEED.map(::favoriteBrowseItem) + stationsFolderItem()
+                val hint = container.authHint.value?.let { listOf(signInHintItem()) } ?: emptyList()
+                val items = hint + Favorites.SEED.map(::favoriteBrowseItem) + stationsFolderItem()
                 Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(items), params))
             }
             STATIONS_ID -> {
@@ -360,7 +374,11 @@ class PlaybackService : MediaLibraryService() {
                     if (resp.ok) Log.i(TAG, "tuned ${fav.label}" + (antenna?.let { " on $it" } ?: ""))
                     else Log.w(TAG, "tune ${fav.label} rejected: ${resp.error}")
                 }
-                .onFailure { Log.w(TAG, "tune ${fav.label} failed", it) }
+                .onFailure {
+                    Log.w(TAG, "tune ${fav.label} failed", it)
+                    if (it is io.rg2.radio.data.AdminRequiredException ||
+                        it is io.rg2.radio.auth.SignInRequiredException) container.actionMessage.value = it.message
+                }
             refreshStations() // keep the cache warm for the next tune / browse
         }
     }
@@ -395,6 +413,19 @@ class PlaybackService : MediaLibraryService() {
 
     /** The last tune this service issued — the "are we changing station?" reference. */
     private var lastTuned: Favorite? = null
+
+    private fun signInHintItem(): MediaItem =
+        MediaItem.Builder()
+            .setMediaId("auth:sign-in-hint")
+            .setMediaMetadata(
+                androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle("Sign in on your phone")
+                    .setSubtitle("Needed to listen away from home")
+                    .setIsBrowsable(false)
+                    .setIsPlayable(false)
+                    .build(),
+            )
+            .build()
 
     private fun rootItem(): MediaItem =
         MediaItem.Builder()

@@ -17,8 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * The scanner has a different control model from the radio: one shared SDR you
  * switch between sources. The read endpoint ([status], [calls]) is public; the
  * control endpoints ([selectMoswin], [tuneMonitor], [setSquelch]) are writes —
- * they attach the same optional `Authorization` header for when NPMplus auth
- * lands, harmless until then.
+ * auth is added by `io.rg2.radio.auth.AuthInterceptor` on the shared client.
  *
  * [settings] is read on every call so a live base-URL change (settings screen,
  * later) takes effect without rebuilding the client.
@@ -57,14 +56,13 @@ class ScannerApi(
      * the new authoritative state, which we return.
      */
     suspend fun setSquelch(enabled: Boolean): SquelchState {
-        val s = settings()
         val body = json.encodeToString(SquelchRequest.serializer(), SquelchRequest(enabled))
             .toRequestBody(JSON_MEDIA_TYPE)
         val builder = Request.Builder().url(scannerBase() + "/api/monitor/squelch").post(body)
-        s.authHeader?.let { builder.header("Authorization", it) }
 
         val resp = client.newCall(builder.build()).await()
         resp.use {
+            if (it.code == 403) throw AdminRequiredException()
             if (!it.isSuccessful) {
                 throw RadioApiException("squelch failed: HTTP ${it.code} ${it.message}")
             }
@@ -94,16 +92,17 @@ class ScannerApi(
     }
 
     private suspend fun post(path: String, body: String?): ScannerControlResponse {
-        val s = settings()
         val reqBody = (body ?: "").toRequestBody(JSON_MEDIA_TYPE)
         val builder = Request.Builder().url(scannerBase() + path).post(reqBody)
-        s.authHeader?.let { builder.header("Authorization", it) }
 
         val resp = client.newCall(builder.build()).await()
         resp.use {
             val text = it.body?.string().orEmpty()
             // Success and the backend's own error bodies are both JSON; map other
             // statuses to a control response carrying the HTTP error as the message.
+            if (it.code == 403 && text.contains("admin required")) {
+                return ScannerControlResponse(error = ADMIN_MESSAGE)
+            }
             if (it.isSuccessful || it.code == 400) {
                 return decode(text, ScannerControlResponse.serializer())
             }

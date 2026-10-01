@@ -1,5 +1,6 @@
 package io.rg2.radio.data
 
+import io.rg2.radio.auth.SignInRequiredException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -18,7 +19,10 @@ internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont
         override fun onResponse(call: Call, response: Response) = cont.resume(response)
         override fun onFailure(call: Call, e: IOException) {
             if (cont.isCancelled) return
-            cont.resumeWithException(RadioApiException("request failed: ${e.message}", e))
+            // Sign-in failures must reach callers as themselves (UI keys off the type).
+            cont.resumeWithException(
+                if (e is SignInRequiredException) e else RadioApiException("request failed: ${e.message}", e),
+            )
         }
     })
     cont.invokeOnCancellation {

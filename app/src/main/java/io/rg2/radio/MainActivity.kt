@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.rg2.radio.ui.AccountRoute
 import io.rg2.radio.ui.NowPlayingRoute
 import io.rg2.radio.ui.ScannerRoute
 import io.rg2.radio.ui.theme.RadioTheme
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
                     when (tab) {
                         Tab.RADIO -> NowPlayingRoute(Modifier.padding(padding))
                         Tab.SCANNER -> ScannerRoute(Modifier.padding(padding))
+                        Tab.ACCOUNT -> AccountRoute(Modifier.padding(padding))
                     }
                 }
             }
@@ -68,7 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val label: String) { RADIO("RADIO"), SCANNER("SCANNER") }
+private enum class Tab(val label: String) { RADIO("RADIO"), SCANNER("SCANNER"), ACCOUNT("ACCOUNT") }
 
 @Composable
 private fun TabBar(selected: Tab, onSelect: (Tab) -> Unit) {

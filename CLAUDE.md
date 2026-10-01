@@ -25,6 +25,8 @@ a native app and not a web wrapper — see below.
 
 ## Current state (2026-07-12)
 
+- **2026-10-01: Authentik sign-in shipped** (phone + Wear), device-verified on Pixel 11 Pro Fold + Pixel Watch 5; core JVM unit tests (47) added — run `./gradlew :core:testDebugUnitTest`.
+
 > 2026-07-12 wave (device-verified on the Pixel 10 Pro Fold):
 > catching the app up to the backend's June stereo era — STEREO LED +
 > real L/R meters (TeeAudioProcessor PCM tap, `audio/StereoLevelTap`),
@@ -83,9 +85,6 @@ device-verified. Implemented:
   `app/build.gradle.kts`) — use it to confirm which build is on a test device.
 - **Networking**: OkHttp + kotlinx.serialization, app-level `AppContainer` in
   `RadioApp` holding the shared client/settings/repositories.
-
-**Not started:** the encrypted settings/credentials store + settings screen
-(currently `InMemoryRadioSettings`, default base URL, no auth).
 
 Backend song identification (RDS → AcoustID → lyric match) and its known
 song-boundary limitation are in the `song-id-pipeline` memory.
@@ -154,16 +153,14 @@ Base URL: `https://radio.rg2.io`  ·  Stream: `https://icecast.rg2.io/fm.mp3`
 - **HTTPS only. Do NOT add a cleartext-traffic exception.** Android blocks
   cleartext by default and both hosts are already TLS behind NPMplus. Keep it
   that way.
-- **Read endpoints are public-safe; writes are not.** `/radio`,
-  `/api/now_playing`, and `/api/stations` are open. `/api/tune` (and the admin
-  routes) are intended to sit behind **NPMplus basic auth** — that auth may not
-  be live yet, but build as if it will be:
-  - Attach an `Authorization` header to write requests.
-  - Store credentials with EncryptedSharedPreferences or DataStore — never in
-    the repo, never hardcoded.
-  - Make the **base URL and credentials user-configurable** in a settings
-    screen, so the app works before and after auth lands and against a LAN IP
-    during testing.
+- **Authentik sign-in (2026-10-01; spec `docs/superpowers/specs/2026-10-01-authentik-signin-design.md`).**
+  - Off-LAN, every radio `*.rg2.io` host requires Authentik; LAN/tailnet bypass needs no login.
+  - Phone: PKCE browser sign-in from the ACCOUNT tab (redirect `io.rg2.radio:/oauth2redirect` → `AuthRedirectActivity`).
+  - Watch: device-code sign-in (Account chip → code at authentik.bobgardner.org/device).
+  - `io.rg2.radio.auth` (core) exchanges the login token per host (client_assertion jwt-bearer → host-issued JWT, 24 h).
+  - One `AuthInterceptor` on the shared OkHttp client covers API calls AND ExoPlayer (`OkHttpDataSource`).
+  - `family` can listen; writes need `homelab-admin` (403 → "Needs admin" toast).
+  - Tokens: Keystore AES-GCM (`KeystoreTokenStore`). Never log tokens.
 
 ## Stations / presets — Cardinals first
 
@@ -273,10 +270,7 @@ Resolved during build: endpoint schemas (`docs/api.md`), tune body
 Retrofit), Android Auto browse tree (built; **untested on Auto**), package
 `io.rg2.radio`, repo at `~/radio-android`. Still open:
 
-1. **Settings/credentials screen** + encrypted store (EncryptedSharedPreferences/
-   DataStore) to replace `InMemoryRadioSettings`; NPMplus auth still not enforced
-   on `/api/tune`, but build for when it lands.
-2. **Android Auto verification** via the Desktop Head Unit / a real head unit.
-3. **Song-ID lifecycle** (backend): the identified track lands late and lingers
+1. **Android Auto verification** via the Desktop Head Unit / a real head unit.
+2. **Song-ID lifecycle** (backend): the identified track lands late and lingers
    through ads into the next song — see the `song-id-pipeline` memory for the
    problem and improvement ideas (RDS-boundary clear, re-confirmation, etc.).

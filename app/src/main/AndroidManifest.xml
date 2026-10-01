@@ -50,6 +50,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Authentik PKCE redirect: io.rg2.radio:/oauth2redirect -->
+        <activity
+            android:name=".auth.AuthRedirectActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="io.rg2.radio" android:path="/oauth2redirect" />
+            </intent-filter>
+        </activity>
+
         <!--
           Media3 MediaLibraryService: drives the media session (notification +
           lock-screen transport, promoted to a foreground service while

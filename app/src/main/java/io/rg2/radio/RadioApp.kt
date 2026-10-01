@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
 import io.rg2.radio.audio.AudioTapHub
+import io.rg2.radio.auth.KeystoreTokenStore
+import io.rg2.radio.auth.TokenStore
 import io.rg2.radio.audio.DuckStatus
 import io.rg2.radio.audio.StereoLevels
 import io.rg2.radio.data.ArtworkRepository
@@ -28,7 +30,7 @@ class RadioApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(getSharedPreferences("radio", Context.MODE_PRIVATE))
+        container = AppContainer(getSharedPreferences("radio", Context.MODE_PRIVATE), KeystoreTokenStore(this))
     }
 }
 
@@ -38,12 +40,26 @@ class RadioApp : Application() {
  * lands. Everything reads settings through the `{ settings }` lambda so that
  * swap won't require rebuilding [api].
  */
-class AppContainer(private val prefs: SharedPreferences) {
+class AppContainer(private val prefs: SharedPreferences, tokenStore: TokenStore) {
     @Volatile
     var settings: RadioSettings = InMemoryRadioSettings()
 
-    /** One OkHttp client (shared connection pool) for the backend and artwork lookups. */
-    val httpClient: OkHttpClient = RadioApi.defaultClient()
+    val authConfig = io.rg2.radio.auth.AuthConfig.DEFAULT
+
+    /** Plain client for Authentik itself (must NOT carry AuthInterceptor). */
+    private val oauthHttp: OkHttpClient = RadioApi.defaultClient()
+    val oauth = io.rg2.radio.auth.OAuthClient(authConfig, oauthHttp)
+    val auth = io.rg2.radio.auth.AuthRepository(authConfig, tokenStore, oauth)
+    val hostTokens = io.rg2.radio.auth.HostTokenCache(authConfig, auth, oauth)
+
+    /** One OkHttp client (shared pool) for backends, artwork AND ExoPlayer streams. */
+    val httpClient: OkHttpClient = RadioApi.defaultClient(io.rg2.radio.auth.AuthInterceptor(hostTokens))
+
+    /** Non-null = show "sign in to listen away from home" (set by PlaybackService). */
+    val authHint: MutableStateFlow<String?> = MutableStateFlow(null)
+
+    /** One-shot user-facing message for failed actions (admin required / sign-in required). */
+    val actionMessage: MutableStateFlow<String?> = MutableStateFlow(null)
 
     val api: RadioApi = RadioApi({ settings }, httpClient)
 
