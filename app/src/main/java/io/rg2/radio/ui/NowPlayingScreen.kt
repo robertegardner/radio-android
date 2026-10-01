@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -111,6 +112,15 @@ fun NowPlayingRoute(
     var vizStyleName by rememberSaveable { mutableStateOf(VizStyle.BARS.name) }
     val vizStyle = VizStyle.valueOf(vizStyleName)
 
+    val actionMsg by container.actionMessage.collectAsStateWithLifecycle()
+    LaunchedEffect(actionMsg) {
+        actionMsg?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+            container.actionMessage.value = null
+        }
+    }
+    val authHint by container.authHint.collectAsStateWithLifecycle()
+
     DisposableEffect(controller) {
         val c = controller ?: return@DisposableEffect onDispose {}
         fun sync() {
@@ -131,48 +141,53 @@ fun NowPlayingRoute(
         onDispose { c.removeListener(listener) }
     }
 
-    NowPlayingScreen(
-        modifier = modifier,
-        state = nowPlaying,
-        isPlaying = isPlaying,
-        isBuffering = isBuffering,
-        enabled = controller != null,
-        artworkUrl = artworkUrl,
-        stations = stations,
-        bitrate = bitrate,
-        stereoLevels = container.stereoLevels,
-        metersActive = isPlaying && isRadioSource,
-        captionsOn = captionsOn,
-        onToggleCaptions = { captionsOn = it },
-        vizStyle = vizStyle,
-        onVizStyleChange = { vizStyleName = it.name },
-        audioSessionId = audioSessionId,
-        duckEnabled = duckEnabled,
-        duckStatus = duckStatus,
-        onToggleDuck = { container.setDuckEnabled(it) },
-        onSetStereo = viewModel::setStereo,
-        onSetAntenna = viewModel::setAntenna,
-        onSetBitrate = viewModel::setBitrate,
-        onPlayPause = {
-            val c = controller ?: return@NowPlayingScreen
-            when {
-                c.currentMediaItem == null -> {
-                    // Cold start: play whatever's currently tuned, no retune.
-                    c.setMediaItem(MediaItem.Builder().setMediaId(Favorites.LIVE_ID).build())
-                    c.prepare()
-                    c.play()
+    Column(modifier) {
+        authHint?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp))
+        }
+        NowPlayingScreen(
+            modifier = Modifier.weight(1f),
+            state = nowPlaying,
+            isPlaying = isPlaying,
+            isBuffering = isBuffering,
+            enabled = controller != null,
+            artworkUrl = artworkUrl,
+            stations = stations,
+            bitrate = bitrate,
+            stereoLevels = container.stereoLevels,
+            metersActive = isPlaying && isRadioSource,
+            captionsOn = captionsOn,
+            onToggleCaptions = { captionsOn = it },
+            vizStyle = vizStyle,
+            onVizStyleChange = { vizStyleName = it.name },
+            audioSessionId = audioSessionId,
+            duckEnabled = duckEnabled,
+            duckStatus = duckStatus,
+            onToggleDuck = { container.setDuckEnabled(it) },
+            onSetStereo = viewModel::setStereo,
+            onSetAntenna = viewModel::setAntenna,
+            onSetBitrate = viewModel::setBitrate,
+            onPlayPause = {
+                val c = controller ?: return@NowPlayingScreen
+                when {
+                    c.currentMediaItem == null -> {
+                        // Cold start: play whatever's currently tuned, no retune.
+                        c.setMediaItem(MediaItem.Builder().setMediaId(Favorites.LIVE_ID).build())
+                        c.prepare()
+                        c.play()
+                    }
+                    c.isPlaying -> c.pause()
+                    else -> c.play()
                 }
-                c.isPlaying -> c.pause()
-                else -> c.play()
-            }
-        },
-        onSelectFavorite = { fav ->
-            val c = controller ?: return@NowPlayingScreen
-            c.setMediaItem(MediaItem.Builder().setMediaId(fav.mediaId).build())
-            c.prepare()
-            c.play()
-        },
-    )
+            },
+            onSelectFavorite = { fav ->
+                val c = controller ?: return@NowPlayingScreen
+                c.setMediaItem(MediaItem.Builder().setMediaId(fav.mediaId).build())
+                c.prepare()
+                c.play()
+            },
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
