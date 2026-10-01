@@ -89,4 +89,12 @@ class AuthRepositoryTest {
         repo.dropHostToken("radio.rg2.io")
         assertNull(repo.hostToken("radio.rg2.io"))
     }
+
+    @Test fun signOutClearsLocallyEvenWhenRevokeFails() {
+        repo.completeLogin(TokenResponse("at", "rt", idToken("kid", "family"), 3600))
+        server.shutdown()
+        repo.signOut()
+        assertNull(store.state)
+        assertEquals(AuthStatus.SignedOut, repo.status.value)
+    }
 }

@@ -94,8 +94,7 @@ class AuthRepository(
     }
 
     fun signOut() {
-        val s = synchronized(this) { state }
+        val s = synchronized(this) { state.also { persist(null) } }
         s?.let { oauth.revoke(it.refreshToken) }
-        persist(null)
     }
 }
