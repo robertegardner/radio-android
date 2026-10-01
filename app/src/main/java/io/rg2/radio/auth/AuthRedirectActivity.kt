@@ -24,7 +24,7 @@ class AuthRedirectActivity : Activity() {
             finishToMain(); return
         }
         thread {
-            val ok = app.container.auth.loginWithCode(code, verifier)
+            val ok = runCatching { app.container.auth.loginWithCode(code, verifier) }.getOrDefault(false)
             runOnUiThread {
                 if (ok) app.container.authHint.value = null
                 Toast.makeText(this, if (ok) "Signed in" else "Sign-in failed — try again", Toast.LENGTH_SHORT).show()

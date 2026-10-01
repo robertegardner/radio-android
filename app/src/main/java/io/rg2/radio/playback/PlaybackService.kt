@@ -158,7 +158,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_READY) reconnectAttempts = 0
+            if (state == Player.STATE_READY) {
+                reconnectAttempts = 0
+                container.authHint.value = null
+            }
         }
     }
 

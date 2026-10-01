@@ -39,10 +39,15 @@ class KeystoreTokenStore(context: Context) : TokenStore {
     }.getOrElse { prefs.edit().remove(KEY).apply(); null }
 
     override fun save(state: AuthState?) {
-        if (state == null) { prefs.edit().remove(KEY).apply(); return }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val ct = cipher.doFinal(json.encodeToString(AuthState.serializer(), state).toByteArray())
-        prefs.edit().putString(KEY, Base64.encodeToString(cipher.iv + ct, Base64.NO_WRAP)).apply()
+        try {
+            if (state == null) { prefs.edit().remove(KEY).apply(); return }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+            val ct = cipher.doFinal(json.encodeToString(AuthState.serializer(), state).toByteArray())
+            prefs.edit().putString(KEY, Base64.encodeToString(cipher.iv + ct, Base64.NO_WRAP)).apply()
+        } catch (e: Exception) {
+            android.util.Log.w("KeystoreTokenStore", "token persist failed", e)
+            prefs.edit().remove(KEY).apply()
+        }
     }
 
     private companion object { const val ALIAS = "radio-auth"; const val KEY = "state" }
