@@ -271,3 +271,13 @@ Robolectric.
 - Hiding admin-only controls by role.
 - Lowering the 24 h host-token validity.
 - An in-app account switcher (sign out, then sign in, is enough).
+
+## Plan-time refinements (2026-10-01, from the implementation plan)
+
+1. PKCE is hand-rolled (OkHttp + a browser `ACTION_VIEW` intent; redirect caught by
+   `AuthRedirectActivity`) instead of AppAuth/Custom Tabs — no new dependency and the
+   login logic is JVM-testable.
+2. Tokens are stored with an Android Keystore AES-GCM key over SharedPreferences
+   (`KeystoreTokenStore`) instead of DataStore + Tink — no new dependency.
+3. Phone Account UI is an ACCOUNT tab in the existing bottom tab bar, not a gear + sheet.
+4. The watch device-code screen shows the user code + URL as text; no QR code.
