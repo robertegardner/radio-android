@@ -76,4 +76,5 @@ dependencies {
     // Media3: the watch runs its own ExoPlayer + media session (standalone).
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    implementation(libs.media3.datasource.okhttp)
 }

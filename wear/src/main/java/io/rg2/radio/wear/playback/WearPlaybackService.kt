@@ -54,6 +54,11 @@ class WearPlaybackService : MediaSessionService() {
         super.onCreate()
 
         player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(container.httpClient),
+                ),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)

@@ -53,6 +53,8 @@ import io.rg2.radio.wear.playback.WearPlaybackService
  */
 @Composable
 fun RadioWearApp(vm: WearViewModel = viewModel()) {
+    var showAccount by remember { mutableStateOf(false) }
+    if (showAccount) { WearAccountScreen(onDone = { showAccount = false }); return }
     val controller = rememberWearController()
     val ui by vm.ui.collectAsStateWithLifecycle()
     val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
@@ -174,6 +176,16 @@ fun RadioWearApp(vm: WearViewModel = viewModel()) {
                     active = ui.activeMediaId == mediaId,
                     enabled = controller != null && !ui.busy,
                     onClick = { vm.tunePreset(preset) },
+                )
+            }
+
+            item {
+                SourceChip(
+                    label = "Account",
+                    secondary = "Sign in for away-from-home",
+                    active = false,
+                    enabled = true,
+                    onClick = { showAccount = true },
                 )
             }
 

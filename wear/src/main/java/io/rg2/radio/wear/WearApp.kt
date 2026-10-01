@@ -21,15 +21,19 @@ class WearApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = WearContainer()
+        container = WearContainer(io.rg2.radio.auth.KeystoreTokenStore(this))
     }
 }
 
-class WearContainer {
+class WearContainer(tokenStore: io.rg2.radio.auth.TokenStore) {
     @Volatile
     var settings: RadioSettings = InMemoryRadioSettings()
 
-    val httpClient: OkHttpClient = RadioApi.defaultClient()
+    val authConfig = io.rg2.radio.auth.AuthConfig.DEFAULT
+    val oauth = io.rg2.radio.auth.OAuthClient(authConfig, RadioApi.defaultClient())
+    val auth = io.rg2.radio.auth.AuthRepository(authConfig, tokenStore, oauth)
+    val hostTokens = io.rg2.radio.auth.HostTokenCache(authConfig, auth, oauth)
+    val httpClient: OkHttpClient = RadioApi.defaultClient(io.rg2.radio.auth.AuthInterceptor(hostTokens))
 
     val api: RadioApi = RadioApi({ settings }, httpClient)
     val scannerApi: ScannerApi = ScannerApi({ settings }, httpClient)
