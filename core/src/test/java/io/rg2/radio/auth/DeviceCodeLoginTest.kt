@@ -63,15 +63,19 @@ class DeviceCodeLoginTest {
     }
 
     @Test fun persistentNetworkFailureStopsAtExpiry() = runTest {
-        withTimeout(30_000) {
-            val shortExpire = MockResponse().setBody(
-                """{"device_code":"dc","user_code":"WXYZ-0001","verification_uri":"https://authentik.bobgardner.org/device","expires_in":12,"interval":5}""")
-            server.enqueue(shortExpire)
-            repeat(5) { server.enqueue(pending("authorization_pending")) }
-            login.run()
-            assertEquals(DeviceLoginState.Failed("Code expired — try again"), login.state.value)
-            assertEquals(3, server.requestCount)
-        }
+        val noRetry = okhttp3.OkHttpClient.Builder().retryOnConnectionFailure(false).build()
+        val cfg = AuthConfig.DEFAULT.copy(baseUrl = server.url("").toString().trimEnd('/'))
+        val oauth = OAuthClient(cfg, noRetry)
+        val r = AuthRepository(cfg, InMemoryTokenStore(), oauth)
+        val dl = DeviceCodeLogin(oauth, r)
+
+        val shortExpire = MockResponse().setBody(
+            """{"device_code":"dc","user_code":"WXYZ-0001","verification_uri":"https://authentik.bobgardner.org/device","expires_in":12,"interval":5}""")
+        server.enqueue(shortExpire)
+        repeat(5) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)) }
+        dl.run()
+        assertEquals(DeviceLoginState.Failed("Code expired — try again"), dl.state.value)
+        assertEquals(3, server.requestCount)
     }
 
     @Test fun rerunAfterFailureStartsFresh() = runTest {
